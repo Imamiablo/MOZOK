@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: mozok_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mozok
+      POSTGRES_PASSWORD: mozok
+      POSTGRES_DB: mozok
+    ports:
+      - "5432:5432"
+    volumes:
+      - mozok_pg_data:/var/lib/postgresql/data
+
+volumes:
+  mozok_pg_data:
