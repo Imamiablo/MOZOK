@@ -1,14 +1,15 @@
 from sqlalchemy.orm import Session
+
+from mozok.agent.service import AgentService
 from mozok.config import get_settings
+from mozok.context.context_builder import ContextBuilder
 from mozok.embeddings.factory import get_embedding_service
 from mozok.faiss_index.store import FaissMemoryIndex
 from mozok.llm.ollama_openai import OllamaOpenAIClient
 from mozok.memory.service import MemoryService
-from mozok.agent.service import AgentService
+from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
 from mozok.schemas.chat import ChatResponse
 from mozok.schemas.memory import MemoryCreate
-from mozok.core.prompt_builder import build_system_prompt
-from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
 
 
 def get_memory_service(db: Session) -> MemoryService:
@@ -28,9 +29,11 @@ class BotCore:
     """
 
     def __init__(self, db: Session):
+        self.db = db
         self.memory = get_memory_service(db)
         self.llm = OllamaOpenAIClient()
         self.agent_service = AgentService(db)
+        self.context_builder = ContextBuilder(db=db, memory_service=self.memory)
 
     def chat(
         self,
@@ -41,27 +44,14 @@ class BotCore:
     ) -> ChatResponse:
         agent = self.agent_service.get_or_create_default_agent(agent_id)
 
-        # Short-term memory is recent conversation from the current session.
-        # It is not stored in SQL and is not indexed in FAISS.
-        short_term_messages = SHORT_TERM_MEMORY.get_messages(
-            agent_id=agent_id,
-            session_id=session_id,
-            limit=short_term_limit,
-        )
-        short_term_block = SHORT_TERM_MEMORY.format_for_prompt(
-            agent_id=agent_id,
-            session_id=session_id,
-            limit=short_term_limit,
-        )
-
-        # Long-term memory is searched semantically via PostgreSQL + FAISS.
-        memories = self.memory.search(agent_id=agent_id, query=message, limit=5)
-        system_prompt = build_system_prompt(
+        context = self.context_builder.build(
             agent=agent,
-            memories=memories,
-            short_term_block=short_term_block,
+            user_message=message,
+            session_id=session_id,
+            short_term_limit=short_term_limit,
         )
 
+        system_prompt = context.to_system_prompt()
         response_text = self.llm.chat(system_prompt=system_prompt, user_message=message)
 
         # Update short-term working memory after the model responds.
@@ -84,19 +74,21 @@ class BotCore:
         self.memory.add_memory(
             MemoryCreate(
                 agent_id=agent_id,
+                session_id=session_id,
                 content=f"User said: {message}",
                 memory_type="raw",
                 importance=2,
-                metadata={"speaker": "user", "session_id": session_id},
+                metadata={"speaker": "user"},
             )
         )
         self.memory.add_memory(
             MemoryCreate(
                 agent_id=agent_id,
+                session_id=session_id,
                 content=f"Bot replied: {response_text}",
                 memory_type="raw",
                 importance=2,
-                metadata={"speaker": "bot", "session_id": session_id},
+                metadata={"speaker": "bot"},
             )
         )
 
@@ -104,6 +96,6 @@ class BotCore:
             agent_id=agent_id,
             session_id=session_id,
             response=response_text,
-            used_memory_ids=[m.id for m in memories],
-            used_short_term_messages_count=len(short_term_messages),
+            used_memory_ids=context.used_memory_ids(),
+            used_short_term_messages_count=context.used_short_term_count(),
         )
