@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from mozok.db.models import AgentRecord
+from mozok.memory.policy import fresh_default_memory_policy
 
 
 class AgentService:
@@ -31,7 +32,7 @@ class AgentService:
             personality=personality,
             system_prompt=system_prompt,
             state_json=state or {},
-            metadata_json=metadata or {},
+            metadata_json=metadata or {"memory_policy": fresh_default_memory_policy(), "memory_maintenance": {}},
         )
 
         self.db.add(agent)
@@ -54,7 +55,7 @@ class AgentService:
             personality="Helpful, curious, and remembers relevant past events.",
             system_prompt="Use memories when relevant. Do not invent memories.",
             state={},
-            metadata={},
+            metadata={"memory_policy": fresh_default_memory_policy(), "memory_maintenance": {}},
         )
 
     def update_state(self, agent_id: str, state_update: dict) -> AgentRecord:

@@ -121,7 +121,7 @@ uvicorn mozok.api.main:app --reload
 Open:
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8001/docs
 ```
 
 ---
@@ -131,7 +131,7 @@ http://127.0.0.1:8000/docs
 Add a memory:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/memories ^
+curl -X POST http://127.0.0.1:8001/memories ^
   -H "Content-Type: application/json" ^
   -d "{\"agent_id\":\"cat_001\",\"content\":\"Denys likes bots that feel alive and remember past events.\",\"memory_type\":\"fact\",\"importance\":7}"
 ```
@@ -139,7 +139,7 @@ curl -X POST http://127.0.0.1:8000/memories ^
 Search memories:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/memories/search ^
+curl -X POST http://127.0.0.1:8001/memories/search ^
   -H "Content-Type: application/json" ^
   -d "{\"agent_id\":\"cat_001\",\"query\":\"What does Denys like in bots?\",\"limit\":5}"
 ```
@@ -147,7 +147,7 @@ curl -X POST http://127.0.0.1:8000/memories/search ^
 Chat:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/chat ^
+curl -X POST http://127.0.0.1:8001/chat ^
   -H "Content-Type: application/json" ^
   -d "{\"agent_id\":\"cat_001\",\"message\":\"What do you remember about what I like?\"}"
 ```

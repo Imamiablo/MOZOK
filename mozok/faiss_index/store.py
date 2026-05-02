@@ -60,6 +60,20 @@ class FaissMemoryIndex:
             results.append((memory_id, float(score)))
         return results
 
+
+    def clear(self) -> None:
+        """Remove all vectors and persist an empty mapping.
+
+        FAISS cannot create a truly empty dimensionless index, so we remove the
+        stored index file and keep the in-memory index unset until the next add().
+        """
+
+        self.index = None
+        self.row_to_memory_id = []
+        if self.index_path.exists():
+            self.index_path.unlink()
+        self.mapping_path.write_text(json.dumps(self.row_to_memory_id), encoding="utf-8")
+
     def save(self) -> None:
         if self.index is not None:
             faiss.write_index(self.index, str(self.index_path))

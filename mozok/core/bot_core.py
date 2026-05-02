@@ -32,27 +32,31 @@ class BotCore:
         self.agent_service = AgentService(db)
 
     def chat(self, agent_id: str, message: str) -> ChatResponse:
-        memories = self.memory.search(agent_id=agent_id, query=message, limit=5)
         agent = self.agent_service.get_or_create_default_agent(agent_id)
+        memories = self.memory.search(agent_id=agent_id, query=message, limit=5)
         system_prompt = build_system_prompt(agent, memories)
 
         response_text = self.llm.chat(system_prompt=system_prompt, user_message=message)
 
-        # Store the user message and the bot response as episodic memories.
+        # Raw dialogue is useful for short-term continuity, but it should not be
+        # treated as an important long-term fact. Maintenance can later summarize
+        # raw dialogue into semantic memories and archive the noisy originals.
         self.memory.add_memory(
             MemoryCreate(
                 agent_id=agent_id,
                 content=f"User said: {message}",
-                memory_type="dialogue",
-                importance=5,
+                memory_type="raw",
+                importance=2,
+                metadata={"speaker": "user"},
             )
         )
         self.memory.add_memory(
             MemoryCreate(
                 agent_id=agent_id,
                 content=f"Bot replied: {response_text}",
-                memory_type="dialogue",
-                importance=5,
+                memory_type="raw",
+                importance=2,
+                metadata={"speaker": "bot"},
             )
         )
 
