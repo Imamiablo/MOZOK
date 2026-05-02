@@ -150,6 +150,9 @@ class MemoryService:
         metadata = dict(data.metadata or {})
         metadata.setdefault("memory_level", normalized_memory_type)
 
+        if data.session_id:
+            metadata.setdefault("session_id", data.session_id)
+
         record = self._create_memory_record(
             agent_id=data.agent_id,
             content=data.content,

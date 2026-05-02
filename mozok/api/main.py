@@ -33,15 +33,7 @@ def root():
 @app.post("/memories", response_model=MemoryRead)
 def add_memory(data: MemoryCreate, db: Session = Depends(get_db)):
     memory = get_memory_service(db).add_memory(data)
-    return MemoryRead(
-        id=memory.id,
-        agent_id=memory.agent_id,
-        content=memory.content,
-        memory_type=memory.memory_type,
-        importance=memory.importance,
-        emotional_weight=memory.emotional_weight,
-        metadata=memory.metadata_json,
-    )
+    return MemoryRead.from_record(memory)
 
 
 @app.post("/memories/search", response_model=list[MemorySearchResult])

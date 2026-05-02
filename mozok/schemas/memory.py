@@ -19,11 +19,16 @@ ForgetAction = Literal[
 class MemoryCreate(BaseModel):
     agent_id: str = Field(..., examples=["cat_001"])
     content: str
-    # Mozok now treats memory_type as the broad memory level:
-    # raw, episodic, semantic, core.
-    # Legacy values like "dialogue" and "event" are still accepted by the service
-    # and normalised automatically.
     memory_type: str = "episodic"
+    session_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional session key for memories that came from a specific "
+            "conversation/session. Mostly useful for raw memories. Stored in "
+            "metadata_json, so no DB migration is needed."
+        ),
+        examples=["default", "game_session_001"],
+    )
     importance: int = Field(default=5, ge=1, le=10)
     emotional_weight: float = 0.0
     metadata: dict = Field(default_factory=dict)
@@ -36,7 +41,19 @@ class MemoryRead(BaseModel):
     memory_type: str
     importance: int
     emotional_weight: float
-    metadata: dict
+    metadata: dict = Field(default_factory=dict)
+
+    @classmethod
+    def from_record(cls, record):
+        return cls(
+            id=record.id,
+            agent_id=record.agent_id,
+            content=record.content,
+            memory_type=record.memory_type,
+            importance=record.importance,
+            emotional_weight=record.emotional_weight,
+            metadata=record.metadata_json or {},
+        )
 
     class Config:
         from_attributes = True
