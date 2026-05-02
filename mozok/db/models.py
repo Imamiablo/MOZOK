@@ -5,7 +5,6 @@ from sqlalchemy import String, Text, DateTime, Integer, Float, Boolean, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from mozok.db.session import Base
 
-
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -40,15 +39,23 @@ class MemoryRecord(Base):
 
 
 class AgentRecord(Base):
-    """A bot/agent identity record.
+    """Bot/agent profile.
 
-    Later this can store personality, base goals, species, role, etc.
+    This is the agent's stable identity:
+    who it is, how it behaves, and what current state it has.
     """
 
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    name: Mapped[str] = mapped_column(String(128))
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+
     description: Mapped[str] = mapped_column(Text, default="")
+    personality: Mapped[str] = mapped_column(Text, default="")
+    system_prompt: Mapped[str] = mapped_column(Text, default="")
+
     state_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

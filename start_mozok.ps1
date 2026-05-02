@@ -82,4 +82,11 @@ Write-Host "Open this in browser:" -ForegroundColor Cyan
 Write-Host "http://127.0.0.1:8000/docs"
 Write-Host ""
 
-& $python -m uvicorn mozok.api.main:app --reload
+New-Item -ItemType Directory -Force -Path ".\logs" | Out-Null
+
+$ErrorActionPreference = "Continue"
+
+& $python -m uvicorn mozok.api.main:app `
+  --host 127.0.0.1 `
+  --port 8000 `
+  --log-level debug

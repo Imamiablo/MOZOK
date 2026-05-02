@@ -4,6 +4,7 @@ from mozok.embeddings.factory import get_embedding_service
 from mozok.faiss_index.store import FaissMemoryIndex
 from mozok.llm.ollama_openai import OllamaOpenAIClient
 from mozok.memory.service import MemoryService
+from mozok.agent.service import AgentService
 from mozok.schemas.chat import ChatResponse
 from mozok.schemas.memory import MemoryCreate
 from mozok.core.prompt_builder import build_system_prompt
@@ -28,10 +29,12 @@ class BotCore:
     def __init__(self, db: Session):
         self.memory = get_memory_service(db)
         self.llm = OllamaOpenAIClient()
+        self.agent_service = AgentService(db)
 
     def chat(self, agent_id: str, message: str) -> ChatResponse:
         memories = self.memory.search(agent_id=agent_id, query=message, limit=5)
-        system_prompt = build_system_prompt(agent_id, memories)
+        agent = self.agent_service.get_or_create_default_agent(agent_id)
+        system_prompt = build_system_prompt(agent, memories)
 
         response_text = self.llm.chat(system_prompt=system_prompt, user_message=message)
 
