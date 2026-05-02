@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from mozok.core.bot_core import BotCore, get_memory_service
+from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
 from mozok.db.session import get_db
 from mozok.schemas.chat import ChatRequest, ChatResponse
 from mozok.schemas.memory import (
@@ -107,14 +108,32 @@ def run_agent_memory_maintenance(
 
 
 @app.post("/agents/{agent_id}/sessions/end", response_model=MemoryMaintenanceResponse)
-def end_agent_session(agent_id: str, db: Session = Depends(get_db)):
-    return get_memory_service(db).end_session(agent_id=agent_id, rebuild_index=True)
+def end_agent_session(
+    agent_id: str,
+    session_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    # Ending a session should clear short-term RAM/context memory.
+    # Long-term raw memories in PostgreSQL are handled by maintenance below.
+    if session_id:
+        cleared_short_term_messages = SHORT_TERM_MEMORY.clear_session(agent_id, session_id)
+    else:
+        cleared_short_term_messages = SHORT_TERM_MEMORY.clear_agent(agent_id)
+
+    result = get_memory_service(db).end_session(agent_id=agent_id, rebuild_index=True)
+    result.notes.append(f"Cleared {cleared_short_term_messages} short-term messages from RAM.")
+    return result
 
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(data: ChatRequest, db: Session = Depends(get_db)):
     try:
-        return BotCore(db).chat(agent_id=data.agent_id, message=data.message)
+        return BotCore(db).chat(
+            agent_id=data.agent_id,
+            message=data.message,
+            session_id=data.session_id,
+            short_term_limit=data.short_term_limit,
+        )
     except Exception as e:
         import traceback
 
