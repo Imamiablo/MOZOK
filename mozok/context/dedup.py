@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any, Iterable
+from typing import Iterable
 
 from mozok.db.models import MemoryRecord
 from mozok.schemas.memory import MemorySearchResult
@@ -19,7 +19,9 @@ LEVEL_PRIORITY = {
     "raw": 1,
 }
 
-
+# Small English stopword list for cheap prompt-time dedup.
+# This is not meant to be a universal NLP system. It only removes common
+# function words so obvious duplicates compare more cleanly.
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by",
     "for", "from", "had", "has", "have", "he", "her", "his", "i", "in", "is",
@@ -31,7 +33,7 @@ STOPWORDS = {
 
 @dataclass(frozen=True)
 class DedupCandidate:
-    """A normalized wrapper around a memory object used during prompt dedup."""
+    """Normalized wrapper around a memory object used during prompt dedup."""
 
     memory: MemoryLike
     source: str
@@ -42,6 +44,30 @@ class DedupCandidate:
     priority: int
     importance: int
     score: float
+
+
+@dataclass(frozen=True)
+class DedupRemovedMemory:
+    """Debug record explaining why one memory was hidden from this prompt."""
+
+    removed_id: int
+    removed_source: str
+    kept_id: int
+    kept_source: str
+    similarity: float
+    token_overlap: float
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {
+            "removed_id": self.removed_id,
+            "removed_source": self.removed_source,
+            "kept_id": self.kept_id,
+            "kept_source": self.kept_source,
+            "similarity": self.similarity,
+            "token_overlap": self.token_overlap,
+            "reason": self.reason,
+        }
 
 
 @dataclass
@@ -56,8 +82,15 @@ class DedupResult:
     semantic_memories: list[MemorySearchResult]
     episodic_memories: list[MemorySearchResult]
     raw_memories: list[MemorySearchResult]
-    removed_count: int
-    removed_memory_ids: list[int]
+    removed: list[DedupRemovedMemory]
+
+    @property
+    def removed_count(self) -> int:
+        return len(self.removed)
+
+    @property
+    def removed_memory_ids(self) -> list[int]:
+        return [item.removed_id for item in self.removed]
 
 
 class ContextMemoryDeduplicator:
@@ -101,15 +134,30 @@ class ContextMemoryDeduplicator:
         candidates.sort(key=self._candidate_sort_key, reverse=True)
 
         kept: list[DedupCandidate] = []
-        removed: list[DedupCandidate] = []
+        removed: list[DedupRemovedMemory] = []
 
         for candidate in candidates:
-            if self._is_duplicate_of_any(candidate, kept):
-                removed.append(candidate)
-            else:
+            match = self._find_duplicate(candidate, kept)
+            if match is None:
                 kept.append(candidate)
+                continue
 
-        # Restore the original bucket structure expected by ContextPackage.
+            existing, similarity, token_overlap = match
+            removed.append(
+                DedupRemovedMemory(
+                    removed_id=candidate.memory_id,
+                    removed_source=candidate.source,
+                    kept_id=existing.memory_id,
+                    kept_source=existing.source,
+                    similarity=round(similarity, 4),
+                    token_overlap=round(token_overlap, 4),
+                    reason=(
+                        "near_duplicate_context_memory; hidden from this prompt only; "
+                        "database memory was not modified"
+                    ),
+                )
+            )
+
         kept_by_source: dict[str, list[MemoryLike]] = {
             "core": [],
             "semantic": [],
@@ -131,8 +179,7 @@ class ContextMemoryDeduplicator:
             semantic_memories=list(kept_by_source["semantic"]),  # type: ignore[list-item]
             episodic_memories=list(kept_by_source["episodic"]),  # type: ignore[list-item]
             raw_memories=list(kept_by_source["raw"]),  # type: ignore[list-item]
-            removed_count=len(removed),
-            removed_memory_ids=[candidate.memory_id for candidate in removed],
+            removed=removed,
         )
 
     def _wrap_many(self, memories: Iterable[MemoryLike], source: str) -> list[DedupCandidate]:
@@ -181,24 +228,35 @@ class ContextMemoryDeduplicator:
             int(getattr(memory, "id", 0) or 0),
         )
 
-    def _is_duplicate_of_any(self, candidate: DedupCandidate, kept: list[DedupCandidate]) -> bool:
+    def _find_duplicate(
+        self,
+        candidate: DedupCandidate,
+        kept: list[DedupCandidate],
+    ) -> tuple[DedupCandidate, float, float] | None:
         for existing in kept:
             if candidate.memory_id and candidate.memory_id == existing.memory_id:
-                return True
-            if self._is_near_duplicate(candidate, existing):
-                return True
-        return False
+                return existing, 1.0, 1.0
 
-    def _is_near_duplicate(self, a: DedupCandidate, b: DedupCandidate) -> bool:
+            similarity = self._sequence_similarity(candidate.normalized_text, existing.normalized_text)
+            overlap = self._token_overlap(candidate.token_set, existing.token_set)
+
+            if self._is_near_duplicate(candidate, existing, similarity=similarity, overlap=overlap):
+                return existing, similarity, overlap
+
+        return None
+
+    def _is_near_duplicate(
+        self,
+        a: DedupCandidate,
+        b: DedupCandidate,
+        similarity: float,
+        overlap: float,
+    ) -> bool:
         """Conservative near-duplicate check based on words + character similarity."""
 
         # Very short memories are risky to dedup automatically.
         if len(a.token_set) < 4 or len(b.token_set) < 4:
             return False
-
-        smaller = min(len(a.token_set), len(b.token_set))
-        shared = len(a.token_set & b.token_set)
-        overlap = shared / max(1, smaller)
 
         # Token containment catches paraphrases like:
         # "practical beginner-friendly explanations" vs
@@ -207,14 +265,20 @@ class ContextMemoryDeduplicator:
             # Avoid collapsing a specific event into a broad general rule unless
             # the text is also fairly close. This keeps cases like
             # "Maria usually steals food" and "Maria stole steak today" separate.
-            sequence = self._sequence_similarity(a.normalized_text, b.normalized_text)
-            if sequence >= 0.72 or shared >= 8:
+            shared = len(a.token_set & b.token_set)
+            if similarity >= 0.72 or shared >= 8:
                 return True
 
-        return self._sequence_similarity(a.normalized_text, b.normalized_text) >= self.similarity_threshold
+        return similarity >= self.similarity_threshold
 
     def _sequence_similarity(self, a: str, b: str) -> float:
         return SequenceMatcher(None, a, b).ratio()
+
+    def _token_overlap(self, a_tokens: frozenset[str], b_tokens: frozenset[str]) -> float:
+        if not a_tokens or not b_tokens:
+            return 0.0
+        smaller = min(len(a_tokens), len(b_tokens))
+        return len(a_tokens & b_tokens) / max(1, smaller)
 
     def _normalize_text(self, text: str) -> str:
         clean = text.lower()

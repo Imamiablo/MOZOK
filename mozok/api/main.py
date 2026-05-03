@@ -1,10 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from mozok.agent.service import AgentService
+from mozok.context.context_builder import ContextBuilder
 from mozok.core.bot_core import BotCore, get_memory_service
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
 from mozok.db.session import get_db
 from mozok.schemas.chat import ChatRequest, ChatResponse
+from mozok.schemas.context import ContextDebugRequest
 from mozok.schemas.memory import (
     MemoryCreate,
     MemoryForgetRequest,
@@ -115,6 +118,32 @@ def end_agent_session(
     result = get_memory_service(db).end_session(agent_id=agent_id, rebuild_index=True)
     result.notes.append(f"Cleared {cleared_short_term_messages} short-term messages from RAM.")
     return result
+
+
+@app.post("/debug/context")
+def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
+    """Build and return the exact context package for a chat turn without calling the LLM.
+
+    Use this for future UI popups, debugging retrieval, checking short-term memory,
+    and seeing which memories were removed by context deduplication.
+    """
+
+    memory_service = get_memory_service(db)
+    agent = AgentService(db).get_or_create_default_agent(data.agent_id)
+    context = ContextBuilder(db=db, memory_service=memory_service).build(
+        agent=agent,
+        user_message=data.message,
+        session_id=data.session_id,
+        short_term_limit=data.short_term_limit,
+        core_limit=data.core_limit,
+        semantic_limit=data.semantic_limit,
+        episodic_limit=data.episodic_limit,
+        raw_limit=data.raw_limit,
+    )
+    return context.to_debug_dict(
+        include_full_prompt=data.include_full_prompt,
+        prompt_preview_chars=data.prompt_preview_chars,
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)

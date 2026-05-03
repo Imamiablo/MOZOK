@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from mozok.db.models import AgentRecord, MemoryRecord
-from mozok.context.dedup import ContextMemoryDeduplicator
+from mozok.context.dedup import ContextMemoryDeduplicator, DedupRemovedMemory
 from mozok.memory.policy import MEMORY_LEVEL_CORE
 from mozok.memory.service import MemoryService
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY, ShortTermMessage
@@ -34,8 +34,7 @@ class ContextPackage:
     semantic_memories: list[MemorySearchResult] = field(default_factory=list)
     episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     raw_memories: list[MemorySearchResult] = field(default_factory=list)
-    dedup_removed_memories_count: int = 0
-    dedup_removed_memory_ids: list[int] = field(default_factory=list)
+    dedup_removed_memories: list[DedupRemovedMemory] = field(default_factory=list)
 
     def used_memory_ids(self) -> list[int]:
         """Return IDs of long-term memories included in this context."""
@@ -54,7 +53,67 @@ class ContextPackage:
         return len(self.short_term_messages)
 
     def dedup_removed_count(self) -> int:
-        return self.dedup_removed_memories_count
+        return len(self.dedup_removed_memories)
+
+    def dedup_removed_memory_ids(self) -> list[int]:
+        return [item.removed_id for item in self.dedup_removed_memories]
+
+    def to_debug_dict(self, include_full_prompt: bool = True, prompt_preview_chars: int = 2000) -> dict:
+        """Return a serializable view of the exact context assembled for this turn.
+
+        This is intended for debug UIs/popups. It does not call the LLM.
+        """
+
+        full_prompt = self.to_system_prompt()
+        safe_preview_chars = max(0, int(prompt_preview_chars))
+
+        return {
+            "agent_id": self.agent_id,
+            "session_id": self.session_id,
+            "current_user_message": self.current_user_message,
+            "used_memory_ids": self.used_memory_ids(),
+            "used_short_term_messages_count": self.used_short_term_count(),
+            "dedup_removed_memories_count": self.dedup_removed_count(),
+            "dedup_removed_memory_ids": self.dedup_removed_memory_ids(),
+            "dedup_removed_details": [item.to_dict() for item in self.dedup_removed_memories],
+            "sections": {
+                "agent_profile": {
+                    "name": self.agent_name,
+                    "description": self.agent_description,
+                    "personality": self.agent_personality,
+                    "system_prompt": self.system_prompt,
+                },
+                "short_term_messages": [
+                    {
+                        "role": message.role,
+                        "content": message.content,
+                        "created_at": message.created_at.isoformat(),
+                    }
+                    for message in self.short_term_messages
+                ],
+                "core_memories": [self._memory_to_debug_dict(memory, source="core") for memory in self.core_memories],
+                "semantic_memories": [self._memory_to_debug_dict(memory, source="semantic") for memory in self.semantic_memories],
+                "episodic_memories": [self._memory_to_debug_dict(memory, source="episodic") for memory in self.episodic_memories],
+                "raw_memories": [self._memory_to_debug_dict(memory, source="raw") for memory in self.raw_memories],
+            },
+            "prompt_preview": full_prompt[:safe_preview_chars] if safe_preview_chars else "",
+            "full_prompt": full_prompt if include_full_prompt else None,
+        }
+
+    def _memory_to_debug_dict(self, memory, source: str) -> dict:
+        metadata = getattr(memory, "metadata", None)
+        if metadata is None:
+            metadata = getattr(memory, "metadata_json", None)
+
+        return {
+            "id": getattr(memory, "id", None),
+            "source": source,
+            "memory_type": getattr(memory, "memory_type", None),
+            "importance": getattr(memory, "importance", None),
+            "score": getattr(memory, "score", None),
+            "content": getattr(memory, "content", ""),
+            "metadata": metadata or {},
+        }
 
     def to_system_prompt(self) -> str:
         """Convert structured context into a plain system prompt for the LLM."""
@@ -227,8 +286,7 @@ class ContextBuilder:
             semantic_memories=deduped.semantic_memories,
             episodic_memories=deduped.episodic_memories,
             raw_memories=deduped.raw_memories,
-            dedup_removed_memories_count=deduped.removed_count,
-            dedup_removed_memory_ids=deduped.removed_memory_ids,
+            dedup_removed_memories=deduped.removed,
         )
 
     def _get_core_memories(self, agent_id: str, limit: int) -> list[MemoryRecord]:
