@@ -101,9 +101,25 @@ class ContextPackage:
         }
 
     def _memory_to_debug_dict(self, memory, source: str) -> dict:
-        metadata = getattr(memory, "metadata", None)
-        if metadata is None:
+        """Convert a memory object into a JSON-safe debug dictionary.
+
+        Important SQLAlchemy foot-gun:
+        Declarative models can expose a `.metadata` attribute from SQLAlchemy
+        itself. That object is not JSON serializable and can make FastAPI's
+        jsonable_encoder recurse until it crashes.
+
+        Our actual memory metadata lives in `metadata_json` on SQL records and
+        in `metadata` on Pydantic search results, so we read those carefully and
+        only return plain dictionaries.
+        """
+
+        if hasattr(memory, "metadata_json"):
             metadata = getattr(memory, "metadata_json", None)
+        else:
+            metadata = getattr(memory, "metadata", None)
+
+        if not isinstance(metadata, dict):
+            metadata = {}
 
         return {
             "id": getattr(memory, "id", None),
@@ -112,7 +128,7 @@ class ContextPackage:
             "importance": getattr(memory, "importance", None),
             "score": getattr(memory, "score", None),
             "content": getattr(memory, "content", ""),
-            "metadata": metadata or {},
+            "metadata": metadata,
         }
 
     def to_system_prompt(self) -> str:
