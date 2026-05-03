@@ -22,4 +22,4 @@ class ChatResponse(BaseModel):
     session_id: str
     response: str
     used_memory_ids: list[int]
-    used_short_term_messages_count: int
+    used_short_term_messages_count: int = 0
