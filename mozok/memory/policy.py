@@ -129,6 +129,17 @@ DEFAULT_MEMORY_POLICY: dict[str, Any] = {
         # Hard delete is deliberately off for automatic maintenance.
         "allow_automatic_hard_delete": False,
     },
+    "summarizer": {
+        # If enabled, maintenance tries to use the configured local LLM to turn
+        # raw memories into cleaner semantic notes. If the LLM fails, Mozok falls
+        # back to deterministic summaries unless fallback is disabled.
+        "enabled": True,
+        "fallback_to_deterministic": True,
+        "max_source_memories_for_llm": 30,
+        "max_chars_per_source_memory": 600,
+        "max_summary_chars": 1800,
+        "temperature": 0.2,
+    },
 }
 
 
