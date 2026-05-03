@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from mozok.db.models import AgentRecord, MemoryRecord
+from mozok.context.dedup import ContextMemoryDeduplicator
 from mozok.memory.policy import MEMORY_LEVEL_CORE
 from mozok.memory.service import MemoryService
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY, ShortTermMessage
@@ -33,6 +34,8 @@ class ContextPackage:
     semantic_memories: list[MemorySearchResult] = field(default_factory=list)
     episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     raw_memories: list[MemorySearchResult] = field(default_factory=list)
+    dedup_removed_memories_count: int = 0
+    dedup_removed_memory_ids: list[int] = field(default_factory=list)
 
     def used_memory_ids(self) -> list[int]:
         """Return IDs of long-term memories included in this context."""
@@ -49,6 +52,9 @@ class ContextPackage:
 
     def used_short_term_count(self) -> int:
         return len(self.short_term_messages)
+
+    def dedup_removed_count(self) -> int:
+        return self.dedup_removed_memories_count
 
     def to_system_prompt(self) -> str:
         """Convert structured context into a plain system prompt for the LLM."""
@@ -150,6 +156,7 @@ class ContextBuilder:
     def __init__(self, db: Session, memory_service: MemoryService):
         self.db = db
         self.memory_service = memory_service
+        self.deduplicator = ContextMemoryDeduplicator()
 
     def build(
         self,
@@ -200,6 +207,13 @@ class ContextBuilder:
                 memory_type="raw",
             )
 
+        deduped = self.deduplicator.deduplicate(
+            core_memories=core_memories,
+            semantic_memories=semantic_memories,
+            episodic_memories=episodic_memories,
+            raw_memories=raw_memories,
+        )
+
         return ContextPackage(
             agent_id=agent_id,
             session_id=session_id,
@@ -209,10 +223,12 @@ class ContextBuilder:
             agent_personality=agent.personality or "",
             current_user_message=user_message,
             short_term_messages=short_term_messages,
-            core_memories=core_memories,
-            semantic_memories=semantic_memories,
-            episodic_memories=episodic_memories,
-            raw_memories=raw_memories,
+            core_memories=deduped.core_memories,
+            semantic_memories=deduped.semantic_memories,
+            episodic_memories=deduped.episodic_memories,
+            raw_memories=deduped.raw_memories,
+            dedup_removed_memories_count=deduped.removed_count,
+            dedup_removed_memory_ids=deduped.removed_memory_ids,
         )
 
     def _get_core_memories(self, agent_id: str, limit: int) -> list[MemoryRecord]:

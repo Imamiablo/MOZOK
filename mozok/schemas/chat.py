@@ -23,3 +23,4 @@ class ChatResponse(BaseModel):
     response: str
     used_memory_ids: list[int]
     used_short_term_messages_count: int = 0
+    dedup_removed_memories_count: int = 0

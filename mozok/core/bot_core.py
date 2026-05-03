@@ -98,4 +98,5 @@ class BotCore:
             response=response_text,
             used_memory_ids=context.used_memory_ids(),
             used_short_term_messages_count=context.used_short_term_count(),
+            dedup_removed_memories_count=context.dedup_removed_count(),
         )
