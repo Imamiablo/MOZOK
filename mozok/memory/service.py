@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from statistics import mean
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -9,6 +8,7 @@ from sqlalchemy.orm import Session
 from mozok.db.models import AgentRecord, MemoryRecord
 from mozok.embeddings.base import EmbeddingService
 from mozok.faiss_index.store import FaissMemoryIndex
+from mozok.llm.ollama_openai import OllamaOpenAIClient
 from mozok.memory.policy import (
     FORGET_ACTION_ARCHIVE,
     FORGET_ACTION_DECAY,
@@ -26,6 +26,11 @@ from mozok.memory.policy import (
     fresh_default_memory_policy,
     normalize_memory_type,
     search_aliases_for_memory_type,
+)
+from mozok.memory.summarizer import (
+    MemorySummarizer,
+    estimate_summary_emotional_weight,
+    estimate_summary_importance,
 )
 from mozok.schemas.memory import MemoryCreate, MemoryMaintenanceResponse, MemorySearchResult
 
@@ -55,6 +60,7 @@ class MemoryService:
         self.db = db
         self.embedding_service = embedding_service
         self.vector_index = vector_index
+        self.summarizer = MemorySummarizer(llm_client=OllamaOpenAIClient())
 
     # ---------------------------------------------------------------------
     # Agent policy helpers
@@ -713,51 +719,55 @@ class MemoryService:
         source_records: list[MemoryRecord],
         trigger: str,
     ) -> MemoryRecord:
-        """Create a semantic summary without requiring an LLM.
+        """Create a semantic summary memory.
 
-        Later this can be upgraded to call the configured LLM for cleaner summaries.
-        For now it makes maintenance deterministic and offline-friendly.
+        First tries the configured LLM summarizer. If Ollama/model access fails,
+        MemorySummarizer returns a deterministic fallback so maintenance still
+        completes and the bot does not lose data.
         """
 
         now = self._utc_now()
         source_records = [record for record in source_records if record is not None]
         source_ids = [record.id for record in source_records]
-        if not source_records:
-            content = f"Memory maintenance summary created at {now.isoformat()} with no source memories."
-            importance = 4
-            emotional_weight = 0.0
-        else:
-            start_at = min((record.created_at for record in source_records if record.created_at), default=now)
-            end_at = max((record.created_at for record in source_records if record.created_at), default=now)
-            lines = []
-            for record in source_records[:20]:
-                trimmed = " ".join((record.content or "").split())[:260]
-                lines.append(f"- ({record.memory_type}, id={record.id}, importance={record.importance}) {trimmed}")
+        policy = self.get_memory_policy(agent_id)
 
-            content = (
-                f"Memory consolidation summary for agent '{agent_id}'.\n"
-                f"Trigger: {trigger}.\n"
-                f"Covered source memories: {len(source_records)}.\n"
-                f"Period: {start_at.isoformat()} to {end_at.isoformat()}.\n"
-                "Source notes:\n"
-                + "\n".join(lines)
+        summary = self.summarizer.summarize(
+            agent_id=agent_id,
+            source_records=source_records,
+            trigger=trigger,
+            policy=policy,
+        )
+
+        content = summary.content.strip()
+        if not content:
+            # Last-resort safety net: never create an empty memory.
+            content = self.summarizer.deterministic_summary(
+                agent_id=agent_id,
+                source_records=source_records,
+                trigger=trigger,
             )
-            importance = max(4, min(8, round(mean([record.importance for record in source_records]))))
-            emotional_weight = mean([record.emotional_weight for record in source_records])
+
+        metadata = {
+            "maintenance_generated": True,
+            "summary_kind": "maintenance_consolidation",
+            "source_memory_ids": source_ids,
+            "source_memory_count": len(source_records),
+            "trigger": trigger,
+            "created_at": now.isoformat(),
+            "summary_method": summary.method,
+        }
+        if summary.model:
+            metadata["summary_model"] = summary.model
+        if summary.error:
+            metadata["summary_error"] = summary.error
 
         return self._create_memory_record(
             agent_id=agent_id,
             content=content,
             memory_type=MEMORY_LEVEL_SEMANTIC,
-            importance=importance,
-            emotional_weight=emotional_weight,
-            metadata={
-                "maintenance_generated": True,
-                "summary_kind": "maintenance_consolidation",
-                "source_memory_ids": source_ids,
-                "trigger": trigger,
-                "created_at": now.isoformat(),
-            },
+            importance=estimate_summary_importance(source_records),
+            emotional_weight=estimate_summary_emotional_weight(source_records),
+            metadata=metadata,
             index=True,
         )
 
