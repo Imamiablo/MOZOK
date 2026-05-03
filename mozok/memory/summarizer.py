@@ -129,38 +129,36 @@ class MemorySummarizer:
             max_chars_per_source=max_chars_per_source,
         )
 
-
-        # This part might need to be outsourced for better control over prompts
         system_prompt = (
             "You are Mozok's memory consolidation module. "
-            "Your job is to convert noisy raw memories into useful long-term semantic memory.\n\n"
+            "Your job is to convert noisy raw memories into useful long-term memory notes.\n\n"
             "Rules:\n"
-            "- Do not invent facts. Only summarize what is supported by the source memories.\n"
-            "- Prefer stable facts, user preferences, decisions, unresolved tasks, and repeated patterns.\n"
-            "- Ignore trivial greetings, filler, and temporary wording unless it matters.\n"
+            "- Do not invent facts. Only summarize what is directly supported by the source memories.\n"
+            "- User messages are evidence about the user. Assistant messages are context only; do not treat assistant guesses, jokes, or questions as facts about the user.\n"
+            "- Do not turn one-off jokes, roleplay, examples, or temporary conversation topics into permanent user preferences.\n"
+            "- Only write 'the user prefers...' when the source memories explicitly show a stable preference or repeated pattern.\n"
+            "- If something happened only in this conversation, write 'In this session...' or 'The user discussed/mentioned...'.\n"
+            "- Use 'The user asked Mozok to remember...' for explicit remember requests unless the statement is clearly a stable personal fact.\n"
+            "- Preserve named entities exactly when useful, such as pet names, project names, tool names, and session IDs.\n"
+            "- Separate user-specific facts from general claims, jokes, fictional statements, and temporary observations.\n"
             "- If there are contradictions, mention uncertainty instead of choosing blindly.\n"
+            "- Do not infer emotions, preferences, or conclusions from assistant replies unless the user confirmed them.\n"
+            "- Do not include empty sections such as 'No open tasks' unless there is a real unresolved task/question to remember.\n"
             "- Write compact memory notes, not a chat reply.\n"
             "- Use the dominant language of the source memories.\n"
             "- Do not include IDs unless they are meaningful to remember.\n"
             "- Output plain text only. No markdown code fences.\n"
-            
-            # General Assistant AI prompt part: 
-
-            "- Do not turn one-off jokes, examples, or temporary conversation topics into permanent user preferences.\n"
-            "- Only write 'the user prefers...' when the source memories explicitly show a stable preference or repeated pattern.\n"
-            "- For one-session topics, write 'In this session...' or 'The user discussed...' instead.\n"
-            "- Separate user-specific facts from general claims, jokes, fictional statements, and temporary observations.\n"
-            "- Preserve named entities exactly when useful, such as pet names, project names, and tool names.\n"
         )
         user_message = (
             f"Agent ID: {agent_id}\n"
             f"Maintenance trigger: {trigger}\n"
             f"Source memory count: {len(source_records)}\n\n"
             "Create a concise semantic memory summary from these source memories.\n"
-            "Recommended format:\n"
-            "- Stable facts/preferences/decisions.\n"
+            "Recommended output style:\n"
+            "- Stable facts only when explicitly supported.\n"
+            "- Session notes for one-off discussion topics or jokes.\n"
             "- Important events if any.\n"
-            "- Open tasks/questions if any.\n\n"
+            "- Open tasks/questions only if they truly remain open.\n\n"
             f"Keep the whole summary under about {max_summary_chars} characters.\n\n"
             "SOURCE MEMORIES:\n"
             f"{source_text}"
