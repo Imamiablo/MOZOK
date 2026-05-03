@@ -129,6 +129,8 @@ class MemorySummarizer:
             max_chars_per_source=max_chars_per_source,
         )
 
+
+        # This part might need to be outsourced for better control over prompts
         system_prompt = (
             "You are Mozok's memory consolidation module. "
             "Your job is to convert noisy raw memories into useful long-term semantic memory.\n\n"
@@ -141,6 +143,14 @@ class MemorySummarizer:
             "- Use the dominant language of the source memories.\n"
             "- Do not include IDs unless they are meaningful to remember.\n"
             "- Output plain text only. No markdown code fences.\n"
+            
+            # General Assistant AI prompt part: 
+
+            "- Do not turn one-off jokes, examples, or temporary conversation topics into permanent user preferences.\n"
+            "- Only write 'the user prefers...' when the source memories explicitly show a stable preference or repeated pattern.\n"
+            "- For one-session topics, write 'In this session...' or 'The user discussed...' instead.\n"
+            "- Separate user-specific facts from general claims, jokes, fictional statements, and temporary observations.\n"
+            "- Preserve named entities exactly when useful, such as pet names, project names, and tool names.\n"
         )
         user_message = (
             f"Agent ID: {agent_id}\n"

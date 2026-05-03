@@ -72,6 +72,7 @@ class MemorySearchResult(BaseModel):
     memory_type: str
     importance: int
     score: float
+    metadata: dict = Field(default_factory=dict)
 
 
 class MemoryForgetRequest(BaseModel):

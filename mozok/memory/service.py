@@ -269,6 +269,7 @@ class MemoryService:
                 memory_type=r.memory_type,
                 importance=r.importance,
                 score=score_by_id.get(r.id, 0.0),
+                metadata=r.metadata_json or {},
             )
             for r in ranked
         ]
