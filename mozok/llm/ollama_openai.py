@@ -13,13 +13,13 @@ class OllamaOpenAIClient:
             api_key="ollama",
         )
 
-    def chat(self, system_prompt: str, user_message: str) -> str:
+    def chat(self, system_prompt: str, user_message: str, temperature: float = 0.7) -> str:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            temperature=0.7,
+            temperature=temperature,
         )
         return response.choices[0].message.content or ""
