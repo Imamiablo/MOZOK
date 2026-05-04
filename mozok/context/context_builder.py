@@ -243,6 +243,7 @@ class ContextBuilder:
         semantic_limit: int = 6,
         episodic_limit: int = 4,
         raw_limit: int = 0,
+        update_memory_access: bool = True,
     ) -> ContextPackage:
         """Collect profile + short-term + long-term memory for one LLM turn."""
 
@@ -264,6 +265,7 @@ class ContextBuilder:
             query=user_message,
             limit=semantic_limit,
             memory_type="semantic",
+            update_access=update_memory_access,
         )
 
         episodic_memories = self.memory_service.search(
@@ -271,6 +273,7 @@ class ContextBuilder:
             query=user_message,
             limit=episodic_limit,
             memory_type="episodic",
+            update_access=update_memory_access,
         )
 
         raw_memories: list[MemorySearchResult] = []
@@ -280,6 +283,7 @@ class ContextBuilder:
                 query=user_message,
                 limit=raw_limit,
                 memory_type="raw",
+                update_access=update_memory_access,
             )
 
         deduped = self.deduplicator.deduplicate(

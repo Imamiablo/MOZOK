@@ -139,6 +139,7 @@ def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
         semantic_limit=data.semantic_limit,
         episodic_limit=data.episodic_limit,
         raw_limit=data.raw_limit,
+        update_memory_access=False,
     )
     return context.to_debug_dict(
         include_full_prompt=data.include_full_prompt,

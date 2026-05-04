@@ -206,11 +206,12 @@ class MemoryService:
         return record
 
     def search(
-        self,
-        agent_id: str,
-        query: str,
-        limit: int = 5,
-        memory_type: str | None = None,
+            self,
+            agent_id: str,
+            query: str,
+            limit: int = 5,
+            memory_type: str | None = None,
+            update_access: bool = True,
     ) -> list[MemorySearchResult]:
         """Semantic search.
 
@@ -254,13 +255,14 @@ class MemoryService:
             reverse=True,
         )[:limit]
 
-        now = self._utc_now()
-        for record in ranked:
-            metadata = dict(record.metadata_json or {})
-            metadata["access_count"] = int(metadata.get("access_count", 0)) + 1
-            record.metadata_json = metadata
-            record.last_accessed_at = now
-        self.db.commit()
+        if update_access and ranked:
+            now = self._utc_now()
+            for record in ranked:
+                metadata = dict(record.metadata_json or {})
+                metadata["access_count"] = int(metadata.get("access_count", 0)) + 1
+                record.metadata_json = metadata
+                record.last_accessed_at = now
+            self.db.commit()
 
         return [
             MemorySearchResult(
