@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from mozok.db.models import AgentRecord, MemoryRecord
 from mozok.context.dedup import ContextMemoryDeduplicator, DedupRemovedMemory
-from mozok.context.token_budget import ContextBudgeter, ContextBudgetPolicy, ContextBudgetReport
+from mozok.context.token_budget import ContextBudgeter, ContextBudgetPolicy, ContextBudgetReport, estimate_tokens
 from mozok.memory.policy import MEMORY_LEVEL_CORE
 from mozok.memory.service import MemoryService
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY, ShortTermMessage
@@ -38,6 +38,21 @@ class ContextPackage:
     dedup_removed_memories: list[DedupRemovedMemory] = field(default_factory=list)
     context_budget: ContextBudgetReport | None = None
 
+    # Debug-only snapshots used to explain the context assembly pipeline.
+    # These are copies of earlier stages so later budget trimming can mutate the
+    # final prompt lists without hiding what happened before.
+    retrieved_short_term_messages: list[ShortTermMessage] = field(default_factory=list)
+    retrieved_core_memories: list[MemoryRecord] = field(default_factory=list)
+    retrieved_semantic_memories: list[MemorySearchResult] = field(default_factory=list)
+    retrieved_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
+    retrieved_raw_memories: list[MemorySearchResult] = field(default_factory=list)
+
+    post_dedup_short_term_messages: list[ShortTermMessage] = field(default_factory=list)
+    post_dedup_core_memories: list[MemoryRecord] = field(default_factory=list)
+    post_dedup_semantic_memories: list[MemorySearchResult] = field(default_factory=list)
+    post_dedup_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
+    post_dedup_raw_memories: list[MemorySearchResult] = field(default_factory=list)
+
     def used_memory_ids(self) -> list[int]:
         """Return IDs of long-term memories included in this context."""
 
@@ -60,6 +75,150 @@ class ContextPackage:
     def dedup_removed_memory_ids(self) -> list[int]:
         return [item.removed_id for item in self.dedup_removed_memories]
 
+    def pipeline_steps(self) -> list[dict]:
+        """Explain how the final prompt context was assembled.
+
+        This is mostly for /debug/context and a future UI popup. It separates
+        the stages that were previously mixed together in one response:
+        retrieval -> deduplication -> token-budget trimming -> final prompt.
+        """
+
+        final_prompt = self.to_system_prompt()
+        final_estimated_tokens = estimate_tokens(final_prompt)
+
+        retrieved_counts = self._stage_counts(
+            short_term_messages=self.retrieved_short_term_messages,
+            core_memories=self.retrieved_core_memories,
+            semantic_memories=self.retrieved_semantic_memories,
+            episodic_memories=self.retrieved_episodic_memories,
+            raw_memories=self.retrieved_raw_memories,
+        )
+        post_dedup_counts = self._stage_counts(
+            short_term_messages=self.post_dedup_short_term_messages,
+            core_memories=self.post_dedup_core_memories,
+            semantic_memories=self.post_dedup_semantic_memories,
+            episodic_memories=self.post_dedup_episodic_memories,
+            raw_memories=self.post_dedup_raw_memories,
+        )
+        final_counts = self._stage_counts(
+            short_term_messages=self.short_term_messages,
+            core_memories=self.core_memories,
+            semantic_memories=self.semantic_memories,
+            episodic_memories=self.episodic_memories,
+            raw_memories=self.raw_memories,
+        )
+
+        budget_report = self.context_budget.to_dict() if self.context_budget else None
+        budget_trimmed_items = budget_report.get("trimmed_items", []) if budget_report else []
+        over_budget_after_trimming = bool(budget_report.get("over_budget_after_trimming", False)) if budget_report else False
+
+        return [
+            {
+                "step": "retrieved",
+                "label": "Retrieved candidate context",
+                "description": "ContextBuilder fetched short-term messages, core memories, and relevant long-term memories before dedup or budget trimming.",
+                "status": "ok",
+                "counts": retrieved_counts,
+                "memory_ids_by_source": self._memory_ids_by_source(
+                    self.retrieved_core_memories,
+                    self.retrieved_semantic_memories,
+                    self.retrieved_episodic_memories,
+                    self.retrieved_raw_memories,
+                ),
+            },
+            {
+                "step": "deduped",
+                "label": "Applied safe context dedup",
+                "description": "Near-duplicate memories were hidden from this prompt only. The database and FAISS index were not modified.",
+                "status": "changed" if self.dedup_removed_memories else "ok",
+                "input_counts": retrieved_counts,
+                "output_counts": post_dedup_counts,
+                "removed_count": self.dedup_removed_count(),
+                "removed_memory_ids": self.dedup_removed_memory_ids(),
+                "removed_details": [item.to_dict() for item in self.dedup_removed_memories],
+            },
+            {
+                "step": "budget_trimmed",
+                "label": "Applied token budget",
+                "description": "The post-dedup context was trimmed if the estimated prompt exceeded the configured budget.",
+                "status": (
+                    "over_budget"
+                    if over_budget_after_trimming
+                    else "changed" if budget_trimmed_items
+                    else "ok"
+                ),
+                "input_counts": post_dedup_counts,
+                "output_counts": final_counts,
+                "budget": budget_report,
+            },
+            {
+                "step": "final_prompt",
+                "label": "Final prompt context",
+                "description": "These are the exact context sections that remain in the final prompt sent to the LLM.",
+                "status": "over_budget" if over_budget_after_trimming else "ok",
+                "counts": final_counts,
+                "used_memory_ids": self.used_memory_ids(),
+                "estimated_prompt_tokens": final_estimated_tokens,
+                "prompt_characters": len(final_prompt),
+                "notes": self._final_prompt_notes(final_counts, over_budget_after_trimming),
+            },
+        ]
+
+    def _stage_counts(
+        self,
+        short_term_messages: list[ShortTermMessage],
+        core_memories: list[MemoryRecord],
+        semantic_memories: list[MemorySearchResult],
+        episodic_memories: list[MemorySearchResult],
+        raw_memories: list[MemorySearchResult],
+    ) -> dict:
+        return {
+            "short_term_messages": len(short_term_messages),
+            "core_memories": len(core_memories),
+            "semantic_memories": len(semantic_memories),
+            "episodic_memories": len(episodic_memories),
+            "raw_memories": len(raw_memories),
+            "total_long_term_memories": (
+                len(core_memories)
+                + len(semantic_memories)
+                + len(episodic_memories)
+                + len(raw_memories)
+            ),
+        }
+
+    def _memory_ids_by_source(
+        self,
+        core_memories: list[MemoryRecord],
+        semantic_memories: list[MemorySearchResult],
+        episodic_memories: list[MemorySearchResult],
+        raw_memories: list[MemorySearchResult],
+    ) -> dict:
+        return {
+            "core": self._memory_ids(core_memories),
+            "semantic": self._memory_ids(semantic_memories),
+            "episodic": self._memory_ids(episodic_memories),
+            "raw": self._memory_ids(raw_memories),
+        }
+
+    def _memory_ids(self, memories: list) -> list[int]:
+        ids: list[int] = []
+        for memory in memories:
+            memory_id = getattr(memory, "id", None)
+            if memory_id is not None:
+                ids.append(int(memory_id))
+        return ids
+
+    def _final_prompt_notes(self, final_counts: dict, over_budget_after_trimming: bool) -> list[str]:
+        notes: list[str] = []
+        if final_counts.get("total_long_term_memories", 0) == 0:
+            notes.append("No long-term memories remain in the final prompt.")
+        if over_budget_after_trimming:
+            notes.append(
+                "The prompt is still over budget after trimming all allowed context items. "
+                "This usually means the base prompt, agent profile, user message, or response guidance is too large for the configured budget."
+            )
+        return notes
+
     def to_debug_dict(self, include_full_prompt: bool = True, prompt_preview_chars: int = 2000) -> dict:
         """Return a serializable view of the exact context assembled for this turn.
 
@@ -79,6 +238,7 @@ class ContextPackage:
             "dedup_removed_memory_ids": self.dedup_removed_memory_ids(),
             "dedup_removed_details": [item.to_dict() for item in self.dedup_removed_memories],
             "context_budget": self.context_budget.to_dict() if self.context_budget else None,
+            "pipeline_steps": self.pipeline_steps(),
             "sections": {
                 "agent_profile": {
                     "name": self.agent_name,
@@ -312,8 +472,18 @@ class ContextBuilder:
             core_memories=deduped.core_memories,
             semantic_memories=deduped.semantic_memories,
             episodic_memories=deduped.episodic_memories,
-            raw_memories=deduped.raw_memories,
-            dedup_removed_memories=deduped.removed,
+            raw_memories=list(deduped.raw_memories),
+            dedup_removed_memories=list(deduped.removed),
+            retrieved_short_term_messages=list(short_term_messages),
+            retrieved_core_memories=list(core_memories),
+            retrieved_semantic_memories=list(semantic_memories),
+            retrieved_episodic_memories=list(episodic_memories),
+            retrieved_raw_memories=list(raw_memories),
+            post_dedup_short_term_messages=list(short_term_messages),
+            post_dedup_core_memories=list(deduped.core_memories),
+            post_dedup_semantic_memories=list(deduped.semantic_memories),
+            post_dedup_episodic_memories=list(deduped.episodic_memories),
+            post_dedup_raw_memories=list(deduped.raw_memories),
         )
 
         budget_policy = ContextBudgetPolicy(
