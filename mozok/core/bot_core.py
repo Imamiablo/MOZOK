@@ -41,6 +41,10 @@ class BotCore:
         message: str,
         session_id: str = "default",
         short_term_limit: int = 20,
+        enforce_token_budget: bool = True,
+        max_prompt_tokens: int = 6000,
+        reserved_response_tokens: int = 1000,
+        allow_core_trimming: bool = False,
     ) -> ChatResponse:
         agent = self.agent_service.get_or_create_default_agent(agent_id)
 
@@ -49,6 +53,10 @@ class BotCore:
             user_message=message,
             session_id=session_id,
             short_term_limit=short_term_limit,
+            enforce_token_budget=enforce_token_budget,
+            max_prompt_tokens=max_prompt_tokens,
+            reserved_response_tokens=reserved_response_tokens,
+            allow_core_trimming=allow_core_trimming,
         )
 
         system_prompt = context.to_system_prompt()
@@ -99,4 +107,5 @@ class BotCore:
             used_memory_ids=context.used_memory_ids(),
             used_short_term_messages_count=context.used_short_term_count(),
             dedup_removed_memories_count=context.dedup_removed_count(),
+            context_budget=context.context_budget.to_dict() if context.context_budget else None,
         )

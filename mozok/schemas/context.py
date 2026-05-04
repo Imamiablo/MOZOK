@@ -25,6 +25,28 @@ class ContextDebugRequest(BaseModel):
     semantic_limit: int = Field(default=6, ge=0, le=50)
     episodic_limit: int = Field(default=4, ge=0, le=50)
     raw_limit: int = Field(default=0, ge=0, le=50)
+
+    enforce_token_budget: bool = Field(
+        default=True,
+        description="If true, trim selected context so the prompt stays within the configured approximate token budget.",
+    )
+    max_prompt_tokens: int = Field(
+        default=6000,
+        ge=100,
+        le=200000,
+        description="Approximate total model-side budget for prompt + reserved response.",
+    )
+    reserved_response_tokens: int = Field(
+        default=1000,
+        ge=0,
+        le=100000,
+        description="Approximate tokens reserved for the model response. The prompt target is max_prompt_tokens - reserved_response_tokens.",
+    )
+    allow_core_trimming: bool = Field(
+        default=False,
+        description="If false, core/profile memories are protected from token-budget trimming.",
+    )
+
     include_full_prompt: bool = Field(
         default=True,
         description="If true, response includes the exact full system prompt that would be sent to the LLM.",

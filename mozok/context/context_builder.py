@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from mozok.db.models import AgentRecord, MemoryRecord
 from mozok.context.dedup import ContextMemoryDeduplicator, DedupRemovedMemory
+from mozok.context.token_budget import ContextBudgeter, ContextBudgetPolicy, ContextBudgetReport
 from mozok.memory.policy import MEMORY_LEVEL_CORE
 from mozok.memory.service import MemoryService
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY, ShortTermMessage
@@ -35,6 +36,7 @@ class ContextPackage:
     episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     raw_memories: list[MemorySearchResult] = field(default_factory=list)
     dedup_removed_memories: list[DedupRemovedMemory] = field(default_factory=list)
+    context_budget: ContextBudgetReport | None = None
 
     def used_memory_ids(self) -> list[int]:
         """Return IDs of long-term memories included in this context."""
@@ -76,6 +78,7 @@ class ContextPackage:
             "dedup_removed_memories_count": self.dedup_removed_count(),
             "dedup_removed_memory_ids": self.dedup_removed_memory_ids(),
             "dedup_removed_details": [item.to_dict() for item in self.dedup_removed_memories],
+            "context_budget": self.context_budget.to_dict() if self.context_budget else None,
             "sections": {
                 "agent_profile": {
                     "name": self.agent_name,
@@ -244,6 +247,10 @@ class ContextBuilder:
         episodic_limit: int = 4,
         raw_limit: int = 0,
         update_memory_access: bool = True,
+        enforce_token_budget: bool = True,
+        max_prompt_tokens: int = 6000,
+        reserved_response_tokens: int = 1000,
+        allow_core_trimming: bool = False,
     ) -> ContextPackage:
         """Collect profile + short-term + long-term memory for one LLM turn."""
 
@@ -293,7 +300,7 @@ class ContextBuilder:
             raw_memories=raw_memories,
         )
 
-        return ContextPackage(
+        context_package = ContextPackage(
             agent_id=agent_id,
             session_id=session_id,
             system_prompt=agent.system_prompt or "",
@@ -308,6 +315,16 @@ class ContextBuilder:
             raw_memories=deduped.raw_memories,
             dedup_removed_memories=deduped.removed,
         )
+
+        budget_policy = ContextBudgetPolicy(
+            enforce=enforce_token_budget,
+            max_prompt_tokens=max_prompt_tokens,
+            reserved_response_tokens=reserved_response_tokens,
+            allow_core_trimming=allow_core_trimming,
+        )
+        context_package.context_budget = ContextBudgeter(budget_policy).apply(context_package)
+
+        return context_package
 
     def _get_core_memories(self, agent_id: str, limit: int) -> list[MemoryRecord]:
         """Core memories are usually always relevant, so fetch them directly from SQL."""
