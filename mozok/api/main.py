@@ -8,6 +8,7 @@ from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
 from mozok.db.session import get_db
 from mozok.schemas.chat import ChatRequest, ChatResponse
 from mozok.schemas.context import ContextDebugRequest
+from mozok.api.entity_state_routes import router as entity_state_router
 from mozok.schemas.memory import (
     MemoryCreate,
     MemoryForgetRequest,
@@ -22,6 +23,7 @@ from mozok.schemas.memory import (
 
 app = FastAPI(title="Mozok", version="0.2.0")
 
+app.include_router(entity_state_router)
 
 @app.get("/")
 def root():
