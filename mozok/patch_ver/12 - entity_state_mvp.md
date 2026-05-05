@@ -1,4 +1,4 @@
-# Patch 15 — Entity State MVP
+# Patch 12 — Entity State MVP
 
 ## Goal
 

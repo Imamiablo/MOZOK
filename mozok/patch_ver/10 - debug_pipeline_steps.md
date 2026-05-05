@@ -1,4 +1,4 @@
-# Patch 12 — Debug Pipeline Steps
+# Patch 10 — Debug Pipeline Steps
 
 This patch improves `/debug/context` by adding a `pipeline_steps` section.
 
