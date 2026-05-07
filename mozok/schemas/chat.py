@@ -18,6 +18,26 @@ class ChatRequest(BaseModel):
         description="How many recent short-term messages to include in the prompt. Use 0 to disable.",
     )
 
+    world_id: str = Field(
+        "default",
+        description="Lorebook world/campaign ID to use when selecting world knowledge.",
+        examples=["default", "from_series_world"],
+    )
+    lorebook_limit: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="How many lorebook entries to include in the prompt. Use 0 to disable lorebook context.",
+    )
+    include_public_lore: bool = Field(
+        default=True,
+        description="If true, include public lorebook entries for this world.",
+    )
+    include_narrator_only_lore: bool = Field(
+        default=False,
+        description="If true, include narrator_only lorebook entries. Keep false for normal NPCs/assistants.",
+    )
+
     enforce_token_budget: bool = Field(
         default=True,
         description="If true, trim selected context so the prompt stays within the configured approximate token budget.",
@@ -46,5 +66,7 @@ class ChatResponse(BaseModel):
     response: str
     used_memory_ids: list[int]
     used_short_term_messages_count: int = 0
+    used_lorebook_entry_ids: list[int] = Field(default_factory=list)
+    used_lorebook_entries_count: int = 0
     dedup_removed_memories_count: int = 0
     context_budget: dict[str, Any] | None = None

@@ -148,6 +148,10 @@ def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
         max_prompt_tokens=data.max_prompt_tokens,
         reserved_response_tokens=data.reserved_response_tokens,
         allow_core_trimming=data.allow_core_trimming,
+        world_id=data.world_id,
+        lorebook_limit=data.lorebook_limit,
+        include_public_lore=data.include_public_lore,
+        include_narrator_only_lore=data.include_narrator_only_lore,
     )
     return context.to_debug_dict(
         include_full_prompt=data.include_full_prompt,
@@ -167,6 +171,10 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             max_prompt_tokens=data.max_prompt_tokens,
             reserved_response_tokens=data.reserved_response_tokens,
             allow_core_trimming=data.allow_core_trimming,
+            world_id=data.world_id,
+            lorebook_limit=data.lorebook_limit,
+            include_public_lore=data.include_public_lore,
+            include_narrator_only_lore=data.include_narrator_only_lore,
         )
     except Exception as e:
         import traceback

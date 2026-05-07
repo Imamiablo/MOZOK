@@ -45,6 +45,10 @@ class BotCore:
         max_prompt_tokens: int = 6000,
         reserved_response_tokens: int = 1000,
         allow_core_trimming: bool = False,
+        world_id: str = "default",
+        lorebook_limit: int = 10,
+        include_public_lore: bool = True,
+        include_narrator_only_lore: bool = False,
     ) -> ChatResponse:
         agent = self.agent_service.get_or_create_default_agent(agent_id)
 
@@ -57,6 +61,10 @@ class BotCore:
             max_prompt_tokens=max_prompt_tokens,
             reserved_response_tokens=reserved_response_tokens,
             allow_core_trimming=allow_core_trimming,
+            world_id=world_id,
+            lorebook_limit=lorebook_limit,
+            include_public_lore=include_public_lore,
+            include_narrator_only_lore=include_narrator_only_lore,
         )
 
         system_prompt = context.to_system_prompt()
@@ -106,6 +114,8 @@ class BotCore:
             response=response_text,
             used_memory_ids=context.used_memory_ids(),
             used_short_term_messages_count=context.used_short_term_count(),
+            used_lorebook_entry_ids=context.used_lorebook_entry_ids(),
+            used_lorebook_entries_count=len(context.lorebook_items),
             dedup_removed_memories_count=context.dedup_removed_count(),
             context_budget=context.context_budget.to_dict() if context.context_budget else None,
         )

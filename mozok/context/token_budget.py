@@ -119,7 +119,7 @@ class ContextBudgeter:
     - it returns a debug report explaining what happened.
 
     Trim order:
-        raw -> episodic -> semantic -> short-term oldest messages -> core only if allowed
+        raw -> episodic -> semantic -> lorebook -> short-term oldest messages -> core only if allowed
     """
 
     def __init__(self, policy: ContextBudgetPolicy | None = None):
@@ -149,6 +149,7 @@ class ContextBudgeter:
             ("raw", "raw_memories", "context_budget_exceeded_trim_raw_first"),
             ("episodic", "episodic_memories", "context_budget_exceeded_trim_weak_episodic"),
             ("semantic", "semantic_memories", "context_budget_exceeded_trim_weak_semantic"),
+            ("lorebook", "lorebook_items", "context_budget_exceeded_trim_lorebook_after_memories"),
             ("short_term", "short_term_messages", "context_budget_exceeded_trim_oldest_short_term"),
         ]
 
@@ -174,7 +175,11 @@ class ContextBudgeter:
                 report.trimmed_items.append(
                     TrimmedContextItem(
                         source=source,
-                        memory_id=getattr(removed, "id", None),
+                        memory_id=(
+                            getattr(removed, "id", None)
+                            if getattr(removed, "id", None) is not None
+                            else getattr(removed, "lorebook_entry_id", None)
+                        ),
                         estimated_tokens=estimate_tokens(content),
                         reason=reason,
                         content_preview=compact_preview(content),
