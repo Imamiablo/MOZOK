@@ -9,6 +9,7 @@ from mozok.db.session import get_db
 from mozok.schemas.chat import ChatRequest, ChatResponse
 from mozok.schemas.context import ContextDebugRequest
 from mozok.api.entity_state_routes import router as entity_state_router
+from mozok.api.goal_routes import router as goal_router
 from mozok.api.lorebook_routes import router as lorebook_router
 from mozok.schemas.memory import (
     MemoryCreate,
@@ -25,6 +26,7 @@ from mozok.schemas.memory import (
 app = FastAPI(title="Mozok", version="0.2.0")
 
 app.include_router(entity_state_router)
+app.include_router(goal_router)
 app.include_router(lorebook_router)
 
 @app.get("/")
@@ -148,6 +150,9 @@ def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
         max_prompt_tokens=data.max_prompt_tokens,
         reserved_response_tokens=data.reserved_response_tokens,
         allow_core_trimming=data.allow_core_trimming,
+        include_goals=data.include_goals,
+        goal_limit=data.goal_limit,
+        goal_status=data.goal_status,
         world_id=data.world_id,
         lorebook_limit=data.lorebook_limit,
         include_public_lore=data.include_public_lore,
@@ -175,6 +180,9 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             max_prompt_tokens=data.max_prompt_tokens,
             reserved_response_tokens=data.reserved_response_tokens,
             allow_core_trimming=data.allow_core_trimming,
+            include_goals=data.include_goals,
+            goal_limit=data.goal_limit,
+            goal_status=data.goal_status,
             world_id=data.world_id,
             lorebook_limit=data.lorebook_limit,
             include_public_lore=data.include_public_lore,

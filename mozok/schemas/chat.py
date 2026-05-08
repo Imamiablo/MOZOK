@@ -18,6 +18,23 @@ class ChatRequest(BaseModel):
         description="How many recent short-term messages to include in the prompt. Use 0 to disable.",
     )
 
+
+    include_goals: bool = Field(
+        default=True,
+        description="If true, include active goals/plans for this agent in the prompt.",
+    )
+    goal_limit: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="How many goals/plans to include. Use 0 to disable goal context.",
+    )
+    goal_status: str | None = Field(
+        default=None,
+        description="Optional goal status filter, e.g. active, blocked, completed. Null includes all active goals.",
+        examples=["active"],
+    )
+
     world_id: str = Field(
         "default",
         description="Lorebook world/campaign ID to use when selecting world knowledge.",
@@ -87,6 +104,8 @@ class ChatResponse(BaseModel):
     response: str
     used_memory_ids: list[int]
     used_short_term_messages_count: int = 0
+    used_goal_ids: list[int] = Field(default_factory=list)
+    used_goals_count: int = 0
     used_lorebook_entry_ids: list[int] = Field(default_factory=list)
     used_lorebook_entries_count: int = 0
     used_entity_state_ids: list[int] = Field(default_factory=list)

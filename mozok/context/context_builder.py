@@ -11,6 +11,8 @@ from mozok.memory.policy import MEMORY_LEVEL_CORE
 from mozok.memory.service import MemoryService
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY, ShortTermMessage
 from mozok.entity_state.service import EntityStateService, format_entity_state_for_prompt_line, reads_from_records
+from mozok.schemas.goals import AgentGoalRead
+from mozok.goals.service import GoalService, format_goal_for_prompt_line, reads_from_records as goal_reads_from_records
 from mozok.lorebook.schemas import LorebookContextItem
 from mozok.lorebook.service import LorebookService, format_lorebook_context
 from mozok.schemas.entity_state import EntityStateRead
@@ -39,6 +41,7 @@ class ContextPackage:
     semantic_memories: list[MemorySearchResult] = field(default_factory=list)
     episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     raw_memories: list[MemorySearchResult] = field(default_factory=list)
+    goal_items: list[AgentGoalRead] = field(default_factory=list)
     lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     entity_state_items: list[EntityStateRead] = field(default_factory=list)
     dedup_removed_memories: list[DedupRemovedMemory] = field(default_factory=list)
@@ -52,6 +55,7 @@ class ContextPackage:
     retrieved_semantic_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_raw_memories: list[MemorySearchResult] = field(default_factory=list)
+    retrieved_goal_items: list[AgentGoalRead] = field(default_factory=list)
     retrieved_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     retrieved_entity_state_items: list[EntityStateRead] = field(default_factory=list)
 
@@ -60,6 +64,7 @@ class ContextPackage:
     post_dedup_semantic_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_raw_memories: list[MemorySearchResult] = field(default_factory=list)
+    post_dedup_goal_items: list[AgentGoalRead] = field(default_factory=list)
     post_dedup_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     post_dedup_entity_state_items: list[EntityStateRead] = field(default_factory=list)
 
@@ -78,6 +83,11 @@ class ContextPackage:
 
     def used_short_term_count(self) -> int:
         return len(self.short_term_messages)
+
+    def used_goal_ids(self) -> list[int]:
+        """Return goal IDs included in this context."""
+
+        return list(dict.fromkeys(int(item.id) for item in self.goal_items if item.id is not None))
 
     def used_lorebook_entry_ids(self) -> list[int]:
         """Return lorebook entry IDs included in this context."""
@@ -112,6 +122,7 @@ class ContextPackage:
             semantic_memories=self.retrieved_semantic_memories,
             episodic_memories=self.retrieved_episodic_memories,
             raw_memories=self.retrieved_raw_memories,
+            goal_items=self.retrieved_goal_items,
             lorebook_items=self.retrieved_lorebook_items,
             entity_state_items=self.retrieved_entity_state_items,
         )
@@ -121,6 +132,7 @@ class ContextPackage:
             semantic_memories=self.post_dedup_semantic_memories,
             episodic_memories=self.post_dedup_episodic_memories,
             raw_memories=self.post_dedup_raw_memories,
+            goal_items=self.post_dedup_goal_items,
             lorebook_items=self.post_dedup_lorebook_items,
             entity_state_items=self.post_dedup_entity_state_items,
         )
@@ -130,6 +142,7 @@ class ContextPackage:
             semantic_memories=self.semantic_memories,
             episodic_memories=self.episodic_memories,
             raw_memories=self.raw_memories,
+            goal_items=self.goal_items,
             lorebook_items=self.lorebook_items,
             entity_state_items=self.entity_state_items,
         )
@@ -151,6 +164,7 @@ class ContextPackage:
                     self.retrieved_episodic_memories,
                     self.retrieved_raw_memories,
                 ),
+                "goal_ids": self._goal_ids(self.retrieved_goal_items),
                 "lorebook_entry_ids": self._lorebook_entry_ids(self.retrieved_lorebook_items),
                 "entity_state_ids": self._entity_state_ids(self.retrieved_entity_state_items),
             },
@@ -186,6 +200,7 @@ class ContextPackage:
                 "status": "over_budget" if over_budget_after_trimming else "ok",
                 "counts": final_counts,
                 "used_memory_ids": self.used_memory_ids(),
+                "used_goal_ids": self.used_goal_ids(),
                 "used_lorebook_entry_ids": self.used_lorebook_entry_ids(),
                 "used_entity_state_ids": self.used_entity_state_ids(),
                 "estimated_prompt_tokens": final_estimated_tokens,
@@ -201,6 +216,7 @@ class ContextPackage:
         semantic_memories: list[MemorySearchResult],
         episodic_memories: list[MemorySearchResult],
         raw_memories: list[MemorySearchResult],
+        goal_items: list[AgentGoalRead],
         lorebook_items: list[LorebookContextItem],
         entity_state_items: list[EntityStateRead],
     ) -> dict:
@@ -210,6 +226,7 @@ class ContextPackage:
             "semantic_memories": len(semantic_memories),
             "episodic_memories": len(episodic_memories),
             "raw_memories": len(raw_memories),
+            "goal_items": len(goal_items),
             "lorebook_items": len(lorebook_items),
             "entity_state_items": len(entity_state_items),
             "total_long_term_memories": (
@@ -218,7 +235,7 @@ class ContextPackage:
                 + len(episodic_memories)
                 + len(raw_memories)
             ),
-            "total_external_context_items": len(lorebook_items) + len(entity_state_items),
+            "total_external_context_items": len(goal_items) + len(lorebook_items) + len(entity_state_items),
         }
 
     def _memory_ids_by_source(
@@ -243,6 +260,9 @@ class ContextPackage:
                 ids.append(int(memory_id))
         return ids
 
+    def _goal_ids(self, items: list[AgentGoalRead]) -> list[int]:
+        return [int(item.id) for item in items if item.id is not None]
+
     def _lorebook_entry_ids(self, items: list[LorebookContextItem]) -> list[int]:
         return [int(item.lorebook_entry_id) for item in items]
 
@@ -253,6 +273,8 @@ class ContextPackage:
         notes: list[str] = []
         if final_counts.get("total_long_term_memories", 0) == 0:
             notes.append("No long-term memories remain in the final prompt.")
+        if final_counts.get("goal_items", 0) == 0:
+            notes.append("No goals/plans remain in the final prompt.")
         if final_counts.get("lorebook_items", 0) == 0:
             notes.append("No lorebook entries remain in the final prompt.")
         if final_counts.get("entity_state_items", 0) == 0:
@@ -279,6 +301,8 @@ class ContextPackage:
             "current_user_message": self.current_user_message,
             "used_memory_ids": self.used_memory_ids(),
             "used_short_term_messages_count": self.used_short_term_count(),
+            "used_goal_ids": self.used_goal_ids(),
+            "used_goals_count": len(self.goal_items),
             "used_lorebook_entry_ids": self.used_lorebook_entry_ids(),
             "used_lorebook_entries_count": len(self.lorebook_items),
             "used_entity_state_ids": self.used_entity_state_ids(),
@@ -307,11 +331,34 @@ class ContextPackage:
                 "semantic_memories": [self._memory_to_debug_dict(memory, source="semantic") for memory in self.semantic_memories],
                 "episodic_memories": [self._memory_to_debug_dict(memory, source="episodic") for memory in self.episodic_memories],
                 "raw_memories": [self._memory_to_debug_dict(memory, source="raw") for memory in self.raw_memories],
+                "goals": [self._goal_to_debug_dict(item) for item in self.goal_items],
                 "lorebook": [self._lorebook_to_debug_dict(item) for item in self.lorebook_items],
                 "entity_states": [self._entity_state_to_debug_dict(item) for item in self.entity_state_items],
             },
             "prompt_preview": full_prompt[:safe_preview_chars] if safe_preview_chars else "",
             "full_prompt": full_prompt if include_full_prompt else None,
+        }
+
+    def _goal_to_debug_dict(self, item: AgentGoalRead) -> dict:
+        return {
+            "source": "goal",
+            "goal_id": item.id,
+            "agent_id": item.agent_id,
+            "goal_key": item.goal_key,
+            "title": item.title,
+            "goal_type": item.goal_type,
+            "status": item.status,
+            "priority": item.priority,
+            "description": item.description,
+            "success_criteria": item.success_criteria,
+            "failure_conditions": item.failure_conditions,
+            "related_entity_ids": item.related_entity_ids,
+            "related_lorebook_keys": item.related_lorebook_keys,
+            "plan_steps": item.plan_steps,
+            "notes": item.notes,
+            "metadata": item.metadata,
+            "active": item.active,
+            "context_line": format_goal_for_prompt_line(item),
         }
 
     def _lorebook_to_debug_dict(self, item: LorebookContextItem) -> dict:
@@ -399,6 +446,12 @@ class ContextPackage:
         if profile_text:
             sections.append(f"Agent profile:\n{profile_text}")
 
+        if self.goal_items:
+            sections.append(
+                "Goals / plans currently active for this agent:\n"
+                + "\n".join(format_goal_for_prompt_line(item) for item in self.goal_items)
+            )
+
         if self.entity_state_items:
             sections.append(
                 "Entity state context available to this agent:\n"
@@ -469,11 +522,12 @@ class ContextPackage:
             "Response guidance:\n"
             "- Use memories only when they are relevant.\n"
             "- Do not claim to remember something unless it appears in the provided context.\n"
+            "- Goals/plans describe what this agent is currently trying to do. Use them to guide intent, priorities, and next actions without forcing irrelevant behavior.\n"
             "- Lorebook/world knowledge is canonical for the selected world and agent access level. "
             "Do not reveal restricted or narrator-only lore unless it appears in the provided lorebook context.\n"
             "- Entity-state context is structured current state about entities from this agent\'s perspective. "
             "Use it only when relevant to the current response.\n"
-            "- If context conflicts, prefer explicit system instructions, then lorebook/world knowledge, "
+            "- If context conflicts, prefer explicit system instructions, then goals/plans, then lorebook/world knowledge, "
             "then entity-state context, then core/profile memories, then semantic memories, then episodic memories, then raw memories.\n"
             "- Keep the response natural and useful."
         )
@@ -510,6 +564,9 @@ class ContextBuilder:
         max_prompt_tokens: int = 6000,
         reserved_response_tokens: int = 1000,
         allow_core_trimming: bool = False,
+        include_goals: bool = False,
+        goal_limit: int = 10,
+        goal_status: str | None = None,
         world_id: str = "default",
         lorebook_limit: int = 0,
         include_public_lore: bool = True,
@@ -560,6 +617,28 @@ class ContextBuilder:
                 update_access=update_memory_access,
             )
 
+        """goal_items: list[AgentGoalRead] = []
+        if include_goals and goal_limit > 0:
+            goal_records = GoalService(self.db).list_goals(
+                agent_id=agent_id,
+                status=goal_status,
+                include_inactive=False,
+                limit=goal_limit,
+            )
+            goal_items = goal_reads_from_records(goal_records)"""
+
+        goal_records = []
+
+        if include_goals and goal_limit > 0:
+            goal_records = GoalService(self.db).list_goals(
+                agent_id=agent.id,
+                status=goal_status,
+                include_inactive=False,
+                limit=goal_limit,
+            )
+
+        goal_items = goal_reads_from_records(goal_records)
+
         lorebook_items: list[LorebookContextItem] = []
         if lorebook_limit > 0:
             lorebook_items = LorebookService(self.db).build_agent_lorebook_context(
@@ -601,6 +680,7 @@ class ContextBuilder:
             semantic_memories=deduped.semantic_memories,
             episodic_memories=deduped.episodic_memories,
             raw_memories=list(deduped.raw_memories),
+            goal_items=list(goal_items),
             lorebook_items=list(lorebook_items),
             entity_state_items=list(entity_state_items),
             dedup_removed_memories=list(deduped.removed),
@@ -609,6 +689,7 @@ class ContextBuilder:
             retrieved_semantic_memories=list(semantic_memories),
             retrieved_episodic_memories=list(episodic_memories),
             retrieved_raw_memories=list(raw_memories),
+            retrieved_goal_items=list(goal_items),
             retrieved_lorebook_items=list(lorebook_items),
             retrieved_entity_state_items=list(entity_state_items),
             post_dedup_short_term_messages=list(short_term_messages),
@@ -616,6 +697,7 @@ class ContextBuilder:
             post_dedup_semantic_memories=list(deduped.semantic_memories),
             post_dedup_episodic_memories=list(deduped.episodic_memories),
             post_dedup_raw_memories=list(deduped.raw_memories),
+            post_dedup_goal_items=list(goal_items),
             post_dedup_lorebook_items=list(lorebook_items),
             post_dedup_entity_state_items=list(entity_state_items),
         )

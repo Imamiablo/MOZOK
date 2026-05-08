@@ -119,7 +119,7 @@ class ContextBudgeter:
     - it returns a debug report explaining what happened.
 
     Trim order:
-        raw -> episodic -> semantic -> lorebook -> entity-state -> short-term oldest messages -> core only if allowed
+        raw -> episodic -> semantic -> lorebook -> entity-state -> goals -> short-term oldest messages -> core only if allowed
     """
 
     def __init__(self, policy: ContextBudgetPolicy | None = None):
@@ -151,6 +151,7 @@ class ContextBudgeter:
             ("semantic", "semantic_memories", "context_budget_exceeded_trim_weak_semantic"),
             ("lorebook", "lorebook_items", "context_budget_exceeded_trim_lorebook_after_memories"),
             ("entity_state", "entity_state_items", "context_budget_exceeded_trim_entity_state_after_lorebook"),
+            ("goal", "goal_items", "context_budget_exceeded_trim_goal_after_entity_state"),
             ("short_term", "short_term_messages", "context_budget_exceeded_trim_oldest_short_term"),
         ]
 
@@ -210,6 +211,17 @@ class ContextBudgeter:
         content = getattr(item, "content", None)
         if content:
             return str(content)
+
+        # AgentGoalRead objects do not have a single content field; use a compact
+        # stable representation so trimming reports remain useful.
+        goal_key = getattr(item, "goal_key", None)
+        if goal_key is not None:
+            title = getattr(item, "title", "") or goal_key
+            status = getattr(item, "status", "")
+            priority = getattr(item, "priority", "")
+            description = getattr(item, "description", "")
+            notes = getattr(item, "notes", "")
+            return f"{title} | goal_key={goal_key} | status={status} | priority={priority} | description={description} | notes={notes}"
 
         # EntityStateRead objects do not have a single content field; use a compact
         # stable representation so trimming reports remain useful.
