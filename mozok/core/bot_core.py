@@ -49,6 +49,10 @@ class BotCore:
         lorebook_limit: int = 10,
         include_public_lore: bool = True,
         include_narrator_only_lore: bool = False,
+        include_entity_states: bool = True,
+        entity_state_limit: int = 10,
+        entity_state_kind: str | None = None,
+        entity_state_entity_id: str | None = None,
     ) -> ChatResponse:
         agent = self.agent_service.get_or_create_default_agent(agent_id)
 
@@ -65,6 +69,10 @@ class BotCore:
             lorebook_limit=lorebook_limit,
             include_public_lore=include_public_lore,
             include_narrator_only_lore=include_narrator_only_lore,
+            include_entity_states=include_entity_states,
+            entity_state_limit=entity_state_limit,
+            entity_state_kind=entity_state_kind,
+            entity_state_entity_id=entity_state_entity_id,
         )
 
         system_prompt = context.to_system_prompt()
@@ -116,6 +124,8 @@ class BotCore:
             used_short_term_messages_count=context.used_short_term_count(),
             used_lorebook_entry_ids=context.used_lorebook_entry_ids(),
             used_lorebook_entries_count=len(context.lorebook_items),
+            used_entity_state_ids=context.used_entity_state_ids(),
+            used_entity_states_count=len(context.entity_state_items),
             dedup_removed_memories_count=context.dedup_removed_count(),
             context_budget=context.context_budget.to_dict() if context.context_budget else None,
         )

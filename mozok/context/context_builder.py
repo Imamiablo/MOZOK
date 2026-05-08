@@ -10,8 +10,10 @@ from mozok.context.token_budget import ContextBudgeter, ContextBudgetPolicy, Con
 from mozok.memory.policy import MEMORY_LEVEL_CORE
 from mozok.memory.service import MemoryService
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY, ShortTermMessage
+from mozok.entity_state.service import EntityStateService, format_entity_state_for_prompt_line, reads_from_records
 from mozok.lorebook.schemas import LorebookContextItem
 from mozok.lorebook.service import LorebookService, format_lorebook_context
+from mozok.schemas.entity_state import EntityStateRead
 from mozok.schemas.memory import MemorySearchResult
 
 
@@ -38,6 +40,7 @@ class ContextPackage:
     episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     raw_memories: list[MemorySearchResult] = field(default_factory=list)
     lorebook_items: list[LorebookContextItem] = field(default_factory=list)
+    entity_state_items: list[EntityStateRead] = field(default_factory=list)
     dedup_removed_memories: list[DedupRemovedMemory] = field(default_factory=list)
     context_budget: ContextBudgetReport | None = None
 
@@ -50,6 +53,7 @@ class ContextPackage:
     retrieved_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_raw_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
+    retrieved_entity_state_items: list[EntityStateRead] = field(default_factory=list)
 
     post_dedup_short_term_messages: list[ShortTermMessage] = field(default_factory=list)
     post_dedup_core_memories: list[MemoryRecord] = field(default_factory=list)
@@ -57,6 +61,7 @@ class ContextPackage:
     post_dedup_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_raw_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
+    post_dedup_entity_state_items: list[EntityStateRead] = field(default_factory=list)
 
     def used_memory_ids(self) -> list[int]:
         """Return IDs of long-term memories included in this context."""
@@ -78,6 +83,11 @@ class ContextPackage:
         """Return lorebook entry IDs included in this context."""
 
         return list(dict.fromkeys(int(item.lorebook_entry_id) for item in self.lorebook_items))
+
+    def used_entity_state_ids(self) -> list[int]:
+        """Return entity-state IDs included in this context."""
+
+        return list(dict.fromkeys(int(item.id) for item in self.entity_state_items if item.id is not None))
 
     def dedup_removed_count(self) -> int:
         return len(self.dedup_removed_memories)
@@ -103,6 +113,7 @@ class ContextPackage:
             episodic_memories=self.retrieved_episodic_memories,
             raw_memories=self.retrieved_raw_memories,
             lorebook_items=self.retrieved_lorebook_items,
+            entity_state_items=self.retrieved_entity_state_items,
         )
         post_dedup_counts = self._stage_counts(
             short_term_messages=self.post_dedup_short_term_messages,
@@ -111,6 +122,7 @@ class ContextPackage:
             episodic_memories=self.post_dedup_episodic_memories,
             raw_memories=self.post_dedup_raw_memories,
             lorebook_items=self.post_dedup_lorebook_items,
+            entity_state_items=self.post_dedup_entity_state_items,
         )
         final_counts = self._stage_counts(
             short_term_messages=self.short_term_messages,
@@ -119,6 +131,7 @@ class ContextPackage:
             episodic_memories=self.episodic_memories,
             raw_memories=self.raw_memories,
             lorebook_items=self.lorebook_items,
+            entity_state_items=self.entity_state_items,
         )
 
         budget_report = self.context_budget.to_dict() if self.context_budget else None
@@ -139,6 +152,7 @@ class ContextPackage:
                     self.retrieved_raw_memories,
                 ),
                 "lorebook_entry_ids": self._lorebook_entry_ids(self.retrieved_lorebook_items),
+                "entity_state_ids": self._entity_state_ids(self.retrieved_entity_state_items),
             },
             {
                 "step": "deduped",
@@ -173,6 +187,7 @@ class ContextPackage:
                 "counts": final_counts,
                 "used_memory_ids": self.used_memory_ids(),
                 "used_lorebook_entry_ids": self.used_lorebook_entry_ids(),
+                "used_entity_state_ids": self.used_entity_state_ids(),
                 "estimated_prompt_tokens": final_estimated_tokens,
                 "prompt_characters": len(final_prompt),
                 "notes": self._final_prompt_notes(final_counts, over_budget_after_trimming),
@@ -187,6 +202,7 @@ class ContextPackage:
         episodic_memories: list[MemorySearchResult],
         raw_memories: list[MemorySearchResult],
         lorebook_items: list[LorebookContextItem],
+        entity_state_items: list[EntityStateRead],
     ) -> dict:
         return {
             "short_term_messages": len(short_term_messages),
@@ -195,13 +211,14 @@ class ContextPackage:
             "episodic_memories": len(episodic_memories),
             "raw_memories": len(raw_memories),
             "lorebook_items": len(lorebook_items),
+            "entity_state_items": len(entity_state_items),
             "total_long_term_memories": (
                 len(core_memories)
                 + len(semantic_memories)
                 + len(episodic_memories)
                 + len(raw_memories)
             ),
-            "total_external_context_items": len(lorebook_items),
+            "total_external_context_items": len(lorebook_items) + len(entity_state_items),
         }
 
     def _memory_ids_by_source(
@@ -229,12 +246,17 @@ class ContextPackage:
     def _lorebook_entry_ids(self, items: list[LorebookContextItem]) -> list[int]:
         return [int(item.lorebook_entry_id) for item in items]
 
+    def _entity_state_ids(self, items: list[EntityStateRead]) -> list[int]:
+        return [int(item.id) for item in items if item.id is not None]
+
     def _final_prompt_notes(self, final_counts: dict, over_budget_after_trimming: bool) -> list[str]:
         notes: list[str] = []
         if final_counts.get("total_long_term_memories", 0) == 0:
             notes.append("No long-term memories remain in the final prompt.")
         if final_counts.get("lorebook_items", 0) == 0:
             notes.append("No lorebook entries remain in the final prompt.")
+        if final_counts.get("entity_state_items", 0) == 0:
+            notes.append("No entity-state records remain in the final prompt.")
         if over_budget_after_trimming:
             notes.append(
                 "The prompt is still over budget after trimming all allowed context items. "
@@ -259,6 +281,8 @@ class ContextPackage:
             "used_short_term_messages_count": self.used_short_term_count(),
             "used_lorebook_entry_ids": self.used_lorebook_entry_ids(),
             "used_lorebook_entries_count": len(self.lorebook_items),
+            "used_entity_state_ids": self.used_entity_state_ids(),
+            "used_entity_states_count": len(self.entity_state_items),
             "dedup_removed_memories_count": self.dedup_removed_count(),
             "dedup_removed_memory_ids": self.dedup_removed_memory_ids(),
             "dedup_removed_details": [item.to_dict() for item in self.dedup_removed_memories],
@@ -284,6 +308,7 @@ class ContextPackage:
                 "episodic_memories": [self._memory_to_debug_dict(memory, source="episodic") for memory in self.episodic_memories],
                 "raw_memories": [self._memory_to_debug_dict(memory, source="raw") for memory in self.raw_memories],
                 "lorebook": [self._lorebook_to_debug_dict(item) for item in self.lorebook_items],
+                "entity_states": [self._entity_state_to_debug_dict(item) for item in self.entity_state_items],
             },
             "prompt_preview": full_prompt[:safe_preview_chars] if safe_preview_chars else "",
             "full_prompt": full_prompt if include_full_prompt else None,
@@ -304,6 +329,23 @@ class ContextPackage:
             "content": item.content,
             "tags": item.tags,
             "metadata": item.metadata,
+        }
+
+    def _entity_state_to_debug_dict(self, item: EntityStateRead) -> dict:
+        return {
+            "source": "entity_state",
+            "entity_state_id": item.id,
+            "agent_id": item.agent_id,
+            "entity_id": item.entity_id,
+            "entity_name": item.entity_name,
+            "entity_type": item.entity_type,
+            "role": item.role,
+            "state_kind": item.state_kind,
+            "attributes": item.attributes,
+            "notes": item.notes,
+            "metadata": item.metadata,
+            "active": item.active,
+            "context_line": format_entity_state_for_prompt_line(item),
         }
 
     def _memory_to_debug_dict(self, memory, source: str) -> dict:
@@ -356,6 +398,12 @@ class ContextPackage:
         profile_text = "\n".join(line for line in profile_lines if line and not line.endswith(": "))
         if profile_text:
             sections.append(f"Agent profile:\n{profile_text}")
+
+        if self.entity_state_items:
+            sections.append(
+                "Entity state context available to this agent:\n"
+                + "\n".join(format_entity_state_for_prompt_line(item) for item in self.entity_state_items)
+            )
 
         if self.lorebook_items:
             sections.append(format_lorebook_context(self.lorebook_items))
@@ -423,8 +471,10 @@ class ContextPackage:
             "- Do not claim to remember something unless it appears in the provided context.\n"
             "- Lorebook/world knowledge is canonical for the selected world and agent access level. "
             "Do not reveal restricted or narrator-only lore unless it appears in the provided lorebook context.\n"
+            "- Entity-state context is structured current state about entities from this agent\'s perspective. "
+            "Use it only when relevant to the current response.\n"
             "- If context conflicts, prefer explicit system instructions, then lorebook/world knowledge, "
-            "then core/profile memories, then semantic memories, then episodic memories, then raw memories.\n"
+            "then entity-state context, then core/profile memories, then semantic memories, then episodic memories, then raw memories.\n"
             "- Keep the response natural and useful."
         )
 
@@ -464,6 +514,10 @@ class ContextBuilder:
         lorebook_limit: int = 0,
         include_public_lore: bool = True,
         include_narrator_only_lore: bool = False,
+        include_entity_states: bool = False,
+        entity_state_limit: int = 10,
+        entity_state_kind: str | None = None,
+        entity_state_entity_id: str | None = None,
     ) -> ContextPackage:
         """Collect profile + short-term + long-term memory for one LLM turn."""
 
@@ -516,6 +570,17 @@ class ContextBuilder:
                 include_narrator_only=include_narrator_only_lore,
             )
 
+        entity_state_items: list[EntityStateRead] = []
+        if include_entity_states and entity_state_limit > 0:
+            entity_state_records = EntityStateService(self.db).list_states(
+                agent_id=agent_id,
+                state_kind=entity_state_kind,
+                entity_id=entity_state_entity_id,
+                include_inactive=False,
+                limit=entity_state_limit,
+            )
+            entity_state_items = reads_from_records(entity_state_records)
+
         deduped = self.deduplicator.deduplicate(
             core_memories=core_memories,
             semantic_memories=semantic_memories,
@@ -537,6 +602,7 @@ class ContextBuilder:
             episodic_memories=deduped.episodic_memories,
             raw_memories=list(deduped.raw_memories),
             lorebook_items=list(lorebook_items),
+            entity_state_items=list(entity_state_items),
             dedup_removed_memories=list(deduped.removed),
             retrieved_short_term_messages=list(short_term_messages),
             retrieved_core_memories=list(core_memories),
@@ -544,12 +610,14 @@ class ContextBuilder:
             retrieved_episodic_memories=list(episodic_memories),
             retrieved_raw_memories=list(raw_memories),
             retrieved_lorebook_items=list(lorebook_items),
+            retrieved_entity_state_items=list(entity_state_items),
             post_dedup_short_term_messages=list(short_term_messages),
             post_dedup_core_memories=list(deduped.core_memories),
             post_dedup_semantic_memories=list(deduped.semantic_memories),
             post_dedup_episodic_memories=list(deduped.episodic_memories),
             post_dedup_raw_memories=list(deduped.raw_memories),
             post_dedup_lorebook_items=list(lorebook_items),
+            post_dedup_entity_state_items=list(entity_state_items),
         )
 
         budget_policy = ContextBudgetPolicy(

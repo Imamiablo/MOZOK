@@ -38,6 +38,27 @@ class ChatRequest(BaseModel):
         description="If true, include narrator_only lorebook entries. Keep false for normal NPCs/assistants.",
     )
 
+    include_entity_states: bool = Field(
+        default=True,
+        description="If true, include active EntityState records for this agent in the prompt.",
+    )
+    entity_state_limit: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="How many EntityState records to include. Use 0 to disable entity-state context.",
+    )
+    entity_state_kind: str | None = Field(
+        default=None,
+        description="Optional EntityState kind filter, e.g. social_relationship, assistant_user_profile, narrative_entity.",
+        examples=["social_relationship"],
+    )
+    entity_state_entity_id: str | None = Field(
+        default=None,
+        description="Optional entity_id filter for EntityState context.",
+        examples=["npc_alice"],
+    )
+
     enforce_token_budget: bool = Field(
         default=True,
         description="If true, trim selected context so the prompt stays within the configured approximate token budget.",
@@ -68,5 +89,7 @@ class ChatResponse(BaseModel):
     used_short_term_messages_count: int = 0
     used_lorebook_entry_ids: list[int] = Field(default_factory=list)
     used_lorebook_entries_count: int = 0
+    used_entity_state_ids: list[int] = Field(default_factory=list)
+    used_entity_states_count: int = 0
     dedup_removed_memories_count: int = 0
     context_budget: dict[str, Any] | None = None

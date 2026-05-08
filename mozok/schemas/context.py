@@ -46,6 +46,27 @@ class ContextDebugRequest(BaseModel):
         description="If true, include narrator_only lorebook entries. Keep false for normal NPCs/assistants.",
     )
 
+    include_entity_states: bool = Field(
+        default=True,
+        description="If true, include active EntityState records for this agent in the prompt.",
+    )
+    entity_state_limit: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="How many EntityState records to include. Use 0 to disable entity-state context.",
+    )
+    entity_state_kind: str | None = Field(
+        default=None,
+        description="Optional EntityState kind filter, e.g. social_relationship, assistant_user_profile, narrative_entity.",
+        examples=["social_relationship"],
+    )
+    entity_state_entity_id: str | None = Field(
+        default=None,
+        description="Optional entity_id filter for EntityState context.",
+        examples=["npc_alice"],
+    )
+
     enforce_token_budget: bool = Field(
         default=True,
         description="If true, trim selected context so the prompt stays within the configured approximate token budget.",

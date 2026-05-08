@@ -119,7 +119,7 @@ class ContextBudgeter:
     - it returns a debug report explaining what happened.
 
     Trim order:
-        raw -> episodic -> semantic -> lorebook -> short-term oldest messages -> core only if allowed
+        raw -> episodic -> semantic -> lorebook -> entity-state -> short-term oldest messages -> core only if allowed
     """
 
     def __init__(self, policy: ContextBudgetPolicy | None = None):
@@ -150,6 +150,7 @@ class ContextBudgeter:
             ("episodic", "episodic_memories", "context_budget_exceeded_trim_weak_episodic"),
             ("semantic", "semantic_memories", "context_budget_exceeded_trim_weak_semantic"),
             ("lorebook", "lorebook_items", "context_budget_exceeded_trim_lorebook_after_memories"),
+            ("entity_state", "entity_state_items", "context_budget_exceeded_trim_entity_state_after_lorebook"),
             ("short_term", "short_term_messages", "context_budget_exceeded_trim_oldest_short_term"),
         ]
 
@@ -171,15 +172,11 @@ class ContextBudgeter:
                 else:
                     removed = items.pop()
 
-                content = getattr(removed, "content", "")
+                content = self._content_for_trimmed_item(removed)
                 report.trimmed_items.append(
                     TrimmedContextItem(
                         source=source,
-                        memory_id=(
-                            getattr(removed, "id", None)
-                            if getattr(removed, "id", None) is not None
-                            else getattr(removed, "lorebook_entry_id", None)
-                        ),
+                        memory_id=self._id_for_trimmed_item(removed),
                         estimated_tokens=estimate_tokens(content),
                         reason=reason,
                         content_preview=compact_preview(content),
@@ -200,3 +197,26 @@ class ContextBudgeter:
             report.notes.append("Context is still over budget after all allowed trimming steps.")
 
         return report
+
+
+    def _id_for_trimmed_item(self, item: Any) -> int | None:
+        if getattr(item, "id", None) is not None:
+            return getattr(item, "id", None)
+        if getattr(item, "lorebook_entry_id", None) is not None:
+            return getattr(item, "lorebook_entry_id", None)
+        return None
+
+    def _content_for_trimmed_item(self, item: Any) -> str:
+        content = getattr(item, "content", None)
+        if content:
+            return str(content)
+
+        # EntityStateRead objects do not have a single content field; use a compact
+        # stable representation so trimming reports remain useful.
+        entity_name = getattr(item, "entity_name", "") or getattr(item, "entity_id", "")
+        state_kind = getattr(item, "state_kind", "entity_state")
+        attributes = getattr(item, "attributes", None)
+        if attributes is None:
+            attributes = getattr(item, "attributes_json", None)
+        notes = getattr(item, "notes", "")
+        return f"{entity_name} | kind={state_kind} | attributes={attributes or {}} | notes={notes or ''}"
