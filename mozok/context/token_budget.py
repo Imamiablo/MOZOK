@@ -119,7 +119,7 @@ class ContextBudgeter:
     - it returns a debug report explaining what happened.
 
     Trim order:
-        raw -> episodic -> knowledge-relations -> semantic -> lorebook -> entity-state -> goals -> short-term oldest messages -> core only if allowed
+        raw -> episodic -> knowledge-relations -> semantic -> lorebook -> entity-state -> procedural-skills -> goals -> short-term oldest messages -> core only if allowed
     """
 
     def __init__(self, policy: ContextBudgetPolicy | None = None):
@@ -152,7 +152,8 @@ class ContextBudgeter:
             ("semantic", "semantic_memories", "context_budget_exceeded_trim_weak_semantic"),
             ("lorebook", "lorebook_items", "context_budget_exceeded_trim_lorebook_after_memories"),
             ("entity_state", "entity_state_items", "context_budget_exceeded_trim_entity_state_after_lorebook"),
-            ("goal", "goal_items", "context_budget_exceeded_trim_goal_after_entity_state"),
+            ("procedural_skill", "procedural_skill_items", "context_budget_exceeded_trim_procedural_skill_after_entity_state"),
+            ("goal", "goal_items", "context_budget_exceeded_trim_goal_after_procedural_skill"),
             ("short_term", "short_term_messages", "context_budget_exceeded_trim_oldest_short_term"),
         ]
 
@@ -212,6 +213,18 @@ class ContextBudgeter:
         content = getattr(item, "content", None)
         if content:
             return str(content)
+
+        # AgentProceduralSkillRead objects do not have a single content field; use a compact
+        # stable representation so trimming reports remain useful.
+        skill_key = getattr(item, "skill_key", None)
+        if skill_key is not None:
+            title = getattr(item, "title", "") or skill_key
+            skill_type = getattr(item, "skill_type", "")
+            status = getattr(item, "status", "")
+            priority = getattr(item, "priority", "")
+            description = getattr(item, "description", "")
+            notes = getattr(item, "notes", "")
+            return f"{title} | skill_key={skill_key} | type={skill_type} | status={status} | priority={priority} | description={description} | notes={notes}"
 
         # AgentGoalRead objects do not have a single content field; use a compact
         # stable representation so trimming reports remain useful.

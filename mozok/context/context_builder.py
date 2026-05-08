@@ -14,10 +14,12 @@ from mozok.entity_state.service import EntityStateService, format_entity_state_f
 from mozok.schemas.goals import AgentGoalRead
 from mozok.goals.service import GoalService, format_goal_for_prompt_line, reads_from_records as goal_reads_from_records
 from mozok.knowledge_relations.service import KnowledgeRelationService, format_knowledge_relation_for_prompt_line, reads_from_records as knowledge_relation_reads_from_records
+from mozok.procedural_skills.service import ProceduralSkillService, format_procedural_skill_for_prompt_line, reads_from_records as procedural_skill_reads_from_records
 from mozok.lorebook.schemas import LorebookContextItem
 from mozok.lorebook.service import LorebookService, format_lorebook_context
 from mozok.schemas.entity_state import EntityStateRead
 from mozok.schemas.knowledge_relations import KnowledgeRelationRead
+from mozok.schemas.procedural_skills import AgentProceduralSkillRead
 from mozok.schemas.memory import MemorySearchResult
 
 
@@ -44,6 +46,7 @@ class ContextPackage:
     episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     raw_memories: list[MemorySearchResult] = field(default_factory=list)
     goal_items: list[AgentGoalRead] = field(default_factory=list)
+    procedural_skill_items: list[AgentProceduralSkillRead] = field(default_factory=list)
     knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     explicit_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     auto_expanded_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
@@ -61,6 +64,7 @@ class ContextPackage:
     retrieved_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_raw_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_goal_items: list[AgentGoalRead] = field(default_factory=list)
+    retrieved_procedural_skill_items: list[AgentProceduralSkillRead] = field(default_factory=list)
     retrieved_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     retrieved_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     retrieved_entity_state_items: list[EntityStateRead] = field(default_factory=list)
@@ -71,6 +75,7 @@ class ContextPackage:
     post_dedup_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_raw_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_goal_items: list[AgentGoalRead] = field(default_factory=list)
+    post_dedup_procedural_skill_items: list[AgentProceduralSkillRead] = field(default_factory=list)
     post_dedup_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     post_dedup_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     post_dedup_entity_state_items: list[EntityStateRead] = field(default_factory=list)
@@ -95,6 +100,11 @@ class ContextPackage:
         """Return goal IDs included in this context."""
 
         return list(dict.fromkeys(int(item.id) for item in self.goal_items if item.id is not None))
+
+    def used_procedural_skill_ids(self) -> list[int]:
+        """Return procedural skill IDs included in this context."""
+
+        return list(dict.fromkeys(int(item.id) for item in self.procedural_skill_items if item.id is not None))
 
     def used_knowledge_relation_ids(self) -> list[int]:
         """Return knowledge relation IDs included in this context."""
@@ -141,6 +151,7 @@ class ContextPackage:
             episodic_memories=self.retrieved_episodic_memories,
             raw_memories=self.retrieved_raw_memories,
             goal_items=self.retrieved_goal_items,
+            procedural_skill_items=self.retrieved_procedural_skill_items,
             knowledge_relation_items=self.retrieved_knowledge_relation_items,
             lorebook_items=self.retrieved_lorebook_items,
             entity_state_items=self.retrieved_entity_state_items,
@@ -152,6 +163,7 @@ class ContextPackage:
             episodic_memories=self.post_dedup_episodic_memories,
             raw_memories=self.post_dedup_raw_memories,
             goal_items=self.post_dedup_goal_items,
+            procedural_skill_items=self.post_dedup_procedural_skill_items,
             knowledge_relation_items=self.post_dedup_knowledge_relation_items,
             lorebook_items=self.post_dedup_lorebook_items,
             entity_state_items=self.post_dedup_entity_state_items,
@@ -163,6 +175,7 @@ class ContextPackage:
             episodic_memories=self.episodic_memories,
             raw_memories=self.raw_memories,
             goal_items=self.goal_items,
+            procedural_skill_items=self.procedural_skill_items,
             knowledge_relation_items=self.knowledge_relation_items,
             lorebook_items=self.lorebook_items,
             entity_state_items=self.entity_state_items,
@@ -186,6 +199,7 @@ class ContextPackage:
                     self.retrieved_raw_memories,
                 ),
                 "goal_ids": self._goal_ids(self.retrieved_goal_items),
+                "procedural_skill_ids": self._procedural_skill_ids(self.retrieved_procedural_skill_items),
                 "knowledge_relation_ids": self._knowledge_relation_ids(self.retrieved_knowledge_relation_items),
                 "lorebook_entry_ids": self._lorebook_entry_ids(self.retrieved_lorebook_items),
                 "entity_state_ids": self._entity_state_ids(self.retrieved_entity_state_items),
@@ -233,6 +247,7 @@ class ContextPackage:
                 "counts": final_counts,
                 "used_memory_ids": self.used_memory_ids(),
                 "used_goal_ids": self.used_goal_ids(),
+                "used_procedural_skill_ids": self.used_procedural_skill_ids(),
                 "used_knowledge_relation_ids": self.used_knowledge_relation_ids(),
                 "used_lorebook_entry_ids": self.used_lorebook_entry_ids(),
                 "used_entity_state_ids": self.used_entity_state_ids(),
@@ -250,6 +265,7 @@ class ContextPackage:
         episodic_memories: list[MemorySearchResult],
         raw_memories: list[MemorySearchResult],
         goal_items: list[AgentGoalRead],
+        procedural_skill_items: list[AgentProceduralSkillRead],
         knowledge_relation_items: list[KnowledgeRelationRead],
         lorebook_items: list[LorebookContextItem],
         entity_state_items: list[EntityStateRead],
@@ -261,6 +277,7 @@ class ContextPackage:
             "episodic_memories": len(episodic_memories),
             "raw_memories": len(raw_memories),
             "goal_items": len(goal_items),
+            "procedural_skill_items": len(procedural_skill_items),
             "knowledge_relation_items": len(knowledge_relation_items),
             "lorebook_items": len(lorebook_items),
             "entity_state_items": len(entity_state_items),
@@ -270,7 +287,7 @@ class ContextPackage:
                 + len(episodic_memories)
                 + len(raw_memories)
             ),
-            "total_external_context_items": len(goal_items) + len(knowledge_relation_items) + len(lorebook_items) + len(entity_state_items),
+            "total_external_context_items": len(goal_items) + len(procedural_skill_items) + len(knowledge_relation_items) + len(lorebook_items) + len(entity_state_items),
         }
 
     def _memory_ids_by_source(
@@ -298,6 +315,9 @@ class ContextPackage:
     def _goal_ids(self, items: list[AgentGoalRead]) -> list[int]:
         return [int(item.id) for item in items if item.id is not None]
 
+    def _procedural_skill_ids(self, items: list[AgentProceduralSkillRead]) -> list[int]:
+        return [int(item.id) for item in items if item.id is not None]
+
     def _knowledge_relation_ids(self, items: list[KnowledgeRelationRead]) -> list[int]:
         return [int(item.id) for item in items if item.id is not None]
 
@@ -313,6 +333,8 @@ class ContextPackage:
             notes.append("No long-term memories remain in the final prompt.")
         if final_counts.get("goal_items", 0) == 0:
             notes.append("No goals/plans remain in the final prompt.")
+        if final_counts.get("procedural_skill_items", 0) == 0:
+            notes.append("No procedural skills remain in the final prompt.")
         if final_counts.get("knowledge_relation_items", 0) == 0:
             notes.append("No knowledge relations remain in the final prompt.")
         if final_counts.get("lorebook_items", 0) == 0:
@@ -343,6 +365,8 @@ class ContextPackage:
             "used_short_term_messages_count": self.used_short_term_count(),
             "used_goal_ids": self.used_goal_ids(),
             "used_goals_count": len(self.goal_items),
+            "used_procedural_skill_ids": self.used_procedural_skill_ids(),
+            "used_procedural_skills_count": len(self.procedural_skill_items),
             "used_knowledge_relation_ids": self.used_knowledge_relation_ids(),
             "used_knowledge_relations_count": len(self.knowledge_relation_items),
             "explicit_knowledge_relation_ids": self.explicit_knowledge_relation_ids(),
@@ -378,6 +402,7 @@ class ContextPackage:
                 "episodic_memories": [self._memory_to_debug_dict(memory, source="episodic") for memory in self.episodic_memories],
                 "raw_memories": [self._memory_to_debug_dict(memory, source="raw") for memory in self.raw_memories],
                 "goals": [self._goal_to_debug_dict(item) for item in self.goal_items],
+                "procedural_skills": [self._procedural_skill_to_debug_dict(item) for item in self.procedural_skill_items],
                 "knowledge_relations": [self._knowledge_relation_to_debug_dict(item) for item in self.knowledge_relation_items],
                 "lorebook": [self._lorebook_to_debug_dict(item) for item in self.lorebook_items],
                 "entity_states": [self._entity_state_to_debug_dict(item) for item in self.entity_state_items],
@@ -406,6 +431,29 @@ class ContextPackage:
             "metadata": item.metadata,
             "active": item.active,
             "context_line": format_goal_for_prompt_line(item),
+        }
+
+    def _procedural_skill_to_debug_dict(self, item: AgentProceduralSkillRead) -> dict:
+        return {
+            "source": "procedural_skill",
+            "procedural_skill_id": item.id,
+            "agent_id": item.agent_id,
+            "skill_key": item.skill_key,
+            "title": item.title,
+            "skill_type": item.skill_type,
+            "status": item.status,
+            "priority": item.priority,
+            "description": item.description,
+            "trigger": item.trigger,
+            "procedure": item.procedure,
+            "examples": item.examples,
+            "related_goal_keys": item.related_goal_keys,
+            "related_entity_ids": item.related_entity_ids,
+            "related_lorebook_keys": item.related_lorebook_keys,
+            "notes": item.notes,
+            "metadata": item.metadata,
+            "active": item.active,
+            "context_line": format_procedural_skill_for_prompt_line(item),
         }
 
     def _knowledge_relation_to_debug_dict(self, item: KnowledgeRelationRead) -> dict:
@@ -520,6 +568,12 @@ class ContextPackage:
                 + "\n".join(format_goal_for_prompt_line(item) for item in self.goal_items)
             )
 
+        if self.procedural_skill_items:
+            sections.append(
+                "Procedural skills / behavior strategies available to this agent:\n"
+                + "\n".join(format_procedural_skill_for_prompt_line(item) for item in self.procedural_skill_items)
+            )
+
         if self.entity_state_items:
             sections.append(
                 "Entity state context available to this agent:\n"
@@ -597,13 +651,14 @@ class ContextPackage:
             "- Use memories only when they are relevant.\n"
             "- Do not claim to remember something unless it appears in the provided context.\n"
             "- Goals/plans describe what this agent is currently trying to do. Use them to guide intent, priorities, and next actions without forcing irrelevant behavior.\n"
+            "- Procedural skills describe how this agent performs tasks or handles situations. Use them as behavior strategies when they are relevant.\n"
             "- Lorebook/world knowledge is canonical for the selected world and agent access level. "
             "Do not reveal restricted or narrator-only lore unless it appears in the provided lorebook context.\n"
             "- Entity-state context is structured current state about entities from this agent\'s perspective. "
             "Use it only when relevant to the current response.\n"
             "- Knowledge relations are links between memories, goals, lorebook, entity states, and other knowledge nodes. "
             "Use them as supporting structure only when they clarify the current response.\n"
-            "- If context conflicts, prefer explicit system instructions, then goals/plans, then lorebook/world knowledge, "
+            "- If context conflicts, prefer explicit system instructions, then goals/plans, then procedural skills, then lorebook/world knowledge, "
             "then entity-state context, then knowledge relations, then core/profile memories, then semantic memories, then episodic memories, then raw memories.\n"
             "- Keep the response natural and useful."
         )
@@ -643,6 +698,10 @@ class ContextBuilder:
         include_goals: bool = False,
         goal_limit: int = 10,
         goal_status: str | None = None,
+        include_procedural_skills: bool = False,
+        procedural_skill_limit: int = 5,
+        procedural_skill_type: str | None = None,
+        procedural_skill_status: str | None = "active",
         include_knowledge_relations: bool = False,
         knowledge_relation_limit: int = 10,
         knowledge_relation_world_id: str | None = None,
@@ -713,6 +772,17 @@ class ContextBuilder:
             )
             goal_items = goal_reads_from_records(goal_records)
 
+        procedural_skill_items: list[AgentProceduralSkillRead] = []
+        if include_procedural_skills and procedural_skill_limit > 0:
+            procedural_skill_records = ProceduralSkillService(self.db).list_skills(
+                agent_id=agent_id,
+                skill_type=procedural_skill_type,
+                status=procedural_skill_status,
+                include_inactive=False,
+                limit=procedural_skill_limit,
+            )
+            procedural_skill_items = procedural_skill_reads_from_records(procedural_skill_records)
+
         explicit_knowledge_relation_items: list[KnowledgeRelationRead] = []
         if include_knowledge_relations and knowledge_relation_limit > 0:
             knowledge_relation_records = KnowledgeRelationService(self.db).list_relations(
@@ -757,6 +827,7 @@ class ContextBuilder:
                 episodic_memories=episodic_memories,
                 raw_memories=raw_memories,
                 goal_items=goal_items,
+                procedural_skill_items=procedural_skill_items,
                 lorebook_items=lorebook_items,
                 entity_state_items=entity_state_items,
             )
@@ -796,6 +867,7 @@ class ContextBuilder:
             episodic_memories=deduped.episodic_memories,
             raw_memories=list(deduped.raw_memories),
             goal_items=list(goal_items),
+            procedural_skill_items=list(procedural_skill_items),
             knowledge_relation_items=list(knowledge_relation_items),
             explicit_knowledge_relation_items=list(explicit_knowledge_relation_items),
             auto_expanded_knowledge_relation_items=list(auto_expanded_knowledge_relation_items),
@@ -808,6 +880,7 @@ class ContextBuilder:
             retrieved_episodic_memories=list(episodic_memories),
             retrieved_raw_memories=list(raw_memories),
             retrieved_goal_items=list(goal_items),
+            retrieved_procedural_skill_items=list(procedural_skill_items),
             retrieved_knowledge_relation_items=list(knowledge_relation_items),
             retrieved_lorebook_items=list(lorebook_items),
             retrieved_entity_state_items=list(entity_state_items),
@@ -817,6 +890,7 @@ class ContextBuilder:
             post_dedup_episodic_memories=list(deduped.episodic_memories),
             post_dedup_raw_memories=list(deduped.raw_memories),
             post_dedup_goal_items=list(goal_items),
+            post_dedup_procedural_skill_items=list(procedural_skill_items),
             post_dedup_knowledge_relation_items=list(knowledge_relation_items),
             post_dedup_lorebook_items=list(lorebook_items),
             post_dedup_entity_state_items=list(entity_state_items),
@@ -857,6 +931,7 @@ class ContextBuilder:
         episodic_memories: list[MemorySearchResult],
         raw_memories: list[MemorySearchResult],
         goal_items: list[AgentGoalRead],
+        procedural_skill_items: list[AgentProceduralSkillRead],
         lorebook_items: list[LorebookContextItem],
         entity_state_items: list[EntityStateRead],
     ) -> list[tuple[str, str]]:
@@ -872,6 +947,13 @@ class ContextBuilder:
                 refs.append(("goal", str(goal.id)))
             if getattr(goal, "goal_key", None):
                 refs.append(("goal", str(goal.goal_key)))
+
+        for skill in procedural_skill_items:
+            if getattr(skill, "id", None) is not None:
+                refs.append(("procedural_skill", str(skill.id)))
+            if getattr(skill, "skill_key", None):
+                refs.append(("procedural_skill", str(skill.skill_key)))
+                refs.append(("skill", str(skill.skill_key)))
 
         for item in lorebook_items:
             if getattr(item, "lorebook_entry_id", None) is not None:

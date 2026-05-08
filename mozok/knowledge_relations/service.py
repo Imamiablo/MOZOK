@@ -11,6 +11,7 @@ from mozok.entity_state.models import AgentEntityStateRecord
 from mozok.goals.models import AgentGoalRecord
 from mozok.knowledge_relations.models import KnowledgeRelationRecord
 from mozok.lorebook.models import LorebookEntryRecord
+from mozok.procedural_skills.models import AgentProceduralSkillRecord
 from mozok.memory.policy import fresh_default_memory_policy
 from mozok.schemas.knowledge_relations import (
     KnowledgeNodeResolution,
@@ -433,6 +434,8 @@ class KnowledgeRelationService:
                 return self._resolve_entity_state(safe_agent_id, safe_id)
             if safe_type == "memory":
                 return self._resolve_memory(safe_agent_id, safe_id)
+            if safe_type == "procedural_skill" or safe_type == "skill":
+                return self._resolve_procedural_skill(safe_agent_id, safe_id)
             if safe_type == "agent":
                 return self._resolve_agent(safe_id)
         except Exception as exc:  # defensive: debug resolution should not crash context building
@@ -529,6 +532,32 @@ class KnowledgeRelationService:
             title=record.entity_name or record.entity_id,
             summary=_clean_text(record.notes or str(record.attributes_json or {}), 280),
             data={"id": record.id, "agent_id": record.agent_id, "entity_id": record.entity_id, "state_kind": record.state_kind, "entity_type": record.entity_type},
+        )
+
+    def _resolve_procedural_skill(self, agent_id: str, node_id: str) -> KnowledgeNodeResolution:
+        record = None
+        int_id = _try_int(node_id)
+        if int_id is not None:
+            record = self.db.get(AgentProceduralSkillRecord, int_id)
+        if record is None:
+            record = (
+                self.db.query(AgentProceduralSkillRecord)
+                .filter(
+                    AgentProceduralSkillRecord.agent_id == agent_id,
+                    AgentProceduralSkillRecord.skill_key == node_id,
+                    AgentProceduralSkillRecord.active == True,  # noqa: E712
+                )
+                .one_or_none()
+            )
+        if record is None:
+            return KnowledgeNodeResolution(found=False, node_type="procedural_skill", node_id=node_id, message="Procedural skill not found")
+        return KnowledgeNodeResolution(
+            found=True,
+            node_type="procedural_skill",
+            node_id=node_id,
+            title=record.title or record.skill_key,
+            summary=_clean_text(record.description or record.notes or record.skill_key, 280),
+            data={"id": record.id, "agent_id": record.agent_id, "skill_key": record.skill_key, "skill_type": record.skill_type, "status": record.status, "priority": record.priority},
         )
 
     def _resolve_memory(self, agent_id: str, node_id: str) -> KnowledgeNodeResolution:

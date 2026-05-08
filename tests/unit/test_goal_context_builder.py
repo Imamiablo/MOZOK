@@ -238,4 +238,4 @@ def test_token_budget_can_trim_goal_context_after_entity_state_context():
     assert context.goal_items == []
     assert report.trimmed_items[-1].source == "goal"
     assert report.trimmed_items[-1].memory_id == 456
-    assert report.trimmed_items[-1].reason == "context_budget_exceeded_trim_goal_after_entity_state"
+    assert report.trimmed_items[-1].reason == "context_budget_exceeded_trim_goal_after_procedural_skill"

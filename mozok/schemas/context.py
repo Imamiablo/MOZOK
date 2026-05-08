@@ -43,6 +43,27 @@ class ContextDebugRequest(BaseModel):
         examples=["active"],
     )
 
+    include_procedural_skills: bool = Field(
+        default=True,
+        description="If true, include active procedural skills / behavior strategies for this agent in the prompt.",
+    )
+    procedural_skill_limit: int = Field(
+        default=5,
+        ge=0,
+        le=50,
+        description="How many procedural skills to include. Use 0 to disable procedural skill context.",
+    )
+    procedural_skill_type: str | None = Field(
+        default=None,
+        description="Optional procedural skill type filter, e.g. conversation, narration, teaching.",
+        examples=["conversation"],
+    )
+    procedural_skill_status: str | None = Field(
+        default="active",
+        description="Optional procedural skill status filter, usually active.",
+        examples=["active"],
+    )
+
     include_knowledge_relations: bool = Field(
         default=False,
         description="If true, include knowledge relation graph edges for this agent in the prompt.",

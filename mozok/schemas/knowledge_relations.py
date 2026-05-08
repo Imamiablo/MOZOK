@@ -10,6 +10,8 @@ COMMON_NODE_TYPES = [
     "lorebook",
     "entity_state",
     "goal",
+    "procedural_skill",
+    "skill",
     "plan_step",
     "agent",
     "entity",
