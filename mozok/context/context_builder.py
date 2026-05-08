@@ -13,9 +13,11 @@ from mozok.memory.short_term_memory import SHORT_TERM_MEMORY, ShortTermMessage
 from mozok.entity_state.service import EntityStateService, format_entity_state_for_prompt_line, reads_from_records
 from mozok.schemas.goals import AgentGoalRead
 from mozok.goals.service import GoalService, format_goal_for_prompt_line, reads_from_records as goal_reads_from_records
+from mozok.knowledge_relations.service import KnowledgeRelationService, format_knowledge_relation_for_prompt_line, reads_from_records as knowledge_relation_reads_from_records
 from mozok.lorebook.schemas import LorebookContextItem
 from mozok.lorebook.service import LorebookService, format_lorebook_context
 from mozok.schemas.entity_state import EntityStateRead
+from mozok.schemas.knowledge_relations import KnowledgeRelationRead
 from mozok.schemas.memory import MemorySearchResult
 
 
@@ -42,6 +44,7 @@ class ContextPackage:
     episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     raw_memories: list[MemorySearchResult] = field(default_factory=list)
     goal_items: list[AgentGoalRead] = field(default_factory=list)
+    knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     entity_state_items: list[EntityStateRead] = field(default_factory=list)
     dedup_removed_memories: list[DedupRemovedMemory] = field(default_factory=list)
@@ -56,6 +59,7 @@ class ContextPackage:
     retrieved_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_raw_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_goal_items: list[AgentGoalRead] = field(default_factory=list)
+    retrieved_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     retrieved_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     retrieved_entity_state_items: list[EntityStateRead] = field(default_factory=list)
 
@@ -65,6 +69,7 @@ class ContextPackage:
     post_dedup_episodic_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_raw_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_goal_items: list[AgentGoalRead] = field(default_factory=list)
+    post_dedup_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     post_dedup_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     post_dedup_entity_state_items: list[EntityStateRead] = field(default_factory=list)
 
@@ -88,6 +93,11 @@ class ContextPackage:
         """Return goal IDs included in this context."""
 
         return list(dict.fromkeys(int(item.id) for item in self.goal_items if item.id is not None))
+
+    def used_knowledge_relation_ids(self) -> list[int]:
+        """Return knowledge relation IDs included in this context."""
+
+        return list(dict.fromkeys(int(item.id) for item in self.knowledge_relation_items if item.id is not None))
 
     def used_lorebook_entry_ids(self) -> list[int]:
         """Return lorebook entry IDs included in this context."""
@@ -123,6 +133,7 @@ class ContextPackage:
             episodic_memories=self.retrieved_episodic_memories,
             raw_memories=self.retrieved_raw_memories,
             goal_items=self.retrieved_goal_items,
+            knowledge_relation_items=self.retrieved_knowledge_relation_items,
             lorebook_items=self.retrieved_lorebook_items,
             entity_state_items=self.retrieved_entity_state_items,
         )
@@ -133,6 +144,7 @@ class ContextPackage:
             episodic_memories=self.post_dedup_episodic_memories,
             raw_memories=self.post_dedup_raw_memories,
             goal_items=self.post_dedup_goal_items,
+            knowledge_relation_items=self.post_dedup_knowledge_relation_items,
             lorebook_items=self.post_dedup_lorebook_items,
             entity_state_items=self.post_dedup_entity_state_items,
         )
@@ -143,6 +155,7 @@ class ContextPackage:
             episodic_memories=self.episodic_memories,
             raw_memories=self.raw_memories,
             goal_items=self.goal_items,
+            knowledge_relation_items=self.knowledge_relation_items,
             lorebook_items=self.lorebook_items,
             entity_state_items=self.entity_state_items,
         )
@@ -165,6 +178,7 @@ class ContextPackage:
                     self.retrieved_raw_memories,
                 ),
                 "goal_ids": self._goal_ids(self.retrieved_goal_items),
+                "knowledge_relation_ids": self._knowledge_relation_ids(self.retrieved_knowledge_relation_items),
                 "lorebook_entry_ids": self._lorebook_entry_ids(self.retrieved_lorebook_items),
                 "entity_state_ids": self._entity_state_ids(self.retrieved_entity_state_items),
             },
@@ -201,6 +215,7 @@ class ContextPackage:
                 "counts": final_counts,
                 "used_memory_ids": self.used_memory_ids(),
                 "used_goal_ids": self.used_goal_ids(),
+                "used_knowledge_relation_ids": self.used_knowledge_relation_ids(),
                 "used_lorebook_entry_ids": self.used_lorebook_entry_ids(),
                 "used_entity_state_ids": self.used_entity_state_ids(),
                 "estimated_prompt_tokens": final_estimated_tokens,
@@ -217,6 +232,7 @@ class ContextPackage:
         episodic_memories: list[MemorySearchResult],
         raw_memories: list[MemorySearchResult],
         goal_items: list[AgentGoalRead],
+        knowledge_relation_items: list[KnowledgeRelationRead],
         lorebook_items: list[LorebookContextItem],
         entity_state_items: list[EntityStateRead],
     ) -> dict:
@@ -227,6 +243,7 @@ class ContextPackage:
             "episodic_memories": len(episodic_memories),
             "raw_memories": len(raw_memories),
             "goal_items": len(goal_items),
+            "knowledge_relation_items": len(knowledge_relation_items),
             "lorebook_items": len(lorebook_items),
             "entity_state_items": len(entity_state_items),
             "total_long_term_memories": (
@@ -235,7 +252,7 @@ class ContextPackage:
                 + len(episodic_memories)
                 + len(raw_memories)
             ),
-            "total_external_context_items": len(goal_items) + len(lorebook_items) + len(entity_state_items),
+            "total_external_context_items": len(goal_items) + len(knowledge_relation_items) + len(lorebook_items) + len(entity_state_items),
         }
 
     def _memory_ids_by_source(
@@ -263,6 +280,9 @@ class ContextPackage:
     def _goal_ids(self, items: list[AgentGoalRead]) -> list[int]:
         return [int(item.id) for item in items if item.id is not None]
 
+    def _knowledge_relation_ids(self, items: list[KnowledgeRelationRead]) -> list[int]:
+        return [int(item.id) for item in items if item.id is not None]
+
     def _lorebook_entry_ids(self, items: list[LorebookContextItem]) -> list[int]:
         return [int(item.lorebook_entry_id) for item in items]
 
@@ -275,6 +295,8 @@ class ContextPackage:
             notes.append("No long-term memories remain in the final prompt.")
         if final_counts.get("goal_items", 0) == 0:
             notes.append("No goals/plans remain in the final prompt.")
+        if final_counts.get("knowledge_relation_items", 0) == 0:
+            notes.append("No knowledge relations remain in the final prompt.")
         if final_counts.get("lorebook_items", 0) == 0:
             notes.append("No lorebook entries remain in the final prompt.")
         if final_counts.get("entity_state_items", 0) == 0:
@@ -303,6 +325,8 @@ class ContextPackage:
             "used_short_term_messages_count": self.used_short_term_count(),
             "used_goal_ids": self.used_goal_ids(),
             "used_goals_count": len(self.goal_items),
+            "used_knowledge_relation_ids": self.used_knowledge_relation_ids(),
+            "used_knowledge_relations_count": len(self.knowledge_relation_items),
             "used_lorebook_entry_ids": self.used_lorebook_entry_ids(),
             "used_lorebook_entries_count": len(self.lorebook_items),
             "used_entity_state_ids": self.used_entity_state_ids(),
@@ -332,6 +356,7 @@ class ContextPackage:
                 "episodic_memories": [self._memory_to_debug_dict(memory, source="episodic") for memory in self.episodic_memories],
                 "raw_memories": [self._memory_to_debug_dict(memory, source="raw") for memory in self.raw_memories],
                 "goals": [self._goal_to_debug_dict(item) for item in self.goal_items],
+                "knowledge_relations": [self._knowledge_relation_to_debug_dict(item) for item in self.knowledge_relation_items],
                 "lorebook": [self._lorebook_to_debug_dict(item) for item in self.lorebook_items],
                 "entity_states": [self._entity_state_to_debug_dict(item) for item in self.entity_state_items],
             },
@@ -359,6 +384,26 @@ class ContextPackage:
             "metadata": item.metadata,
             "active": item.active,
             "context_line": format_goal_for_prompt_line(item),
+        }
+
+    def _knowledge_relation_to_debug_dict(self, item: KnowledgeRelationRead) -> dict:
+        return {
+            "source": "knowledge_relation",
+            "knowledge_relation_id": item.id,
+            "agent_id": item.agent_id,
+            "world_id": item.world_id,
+            "source_type": item.source_type,
+            "source_id": item.source_id,
+            "relation_type": item.relation_type,
+            "target_type": item.target_type,
+            "target_id": item.target_id,
+            "strength": item.strength,
+            "confidence": item.confidence,
+            "description": item.description,
+            "evidence": item.evidence,
+            "metadata": item.metadata,
+            "active": item.active,
+            "context_line": format_knowledge_relation_for_prompt_line(item),
         }
 
     def _lorebook_to_debug_dict(self, item: LorebookContextItem) -> dict:
@@ -461,6 +506,12 @@ class ContextPackage:
         if self.lorebook_items:
             sections.append(format_lorebook_context(self.lorebook_items))
 
+        if self.knowledge_relation_items:
+            sections.append(
+                "Knowledge relations / links available to this agent:\n"
+                + "\n".join(format_knowledge_relation_for_prompt_line(item) for item in self.knowledge_relation_items)
+            )
+
         if self.core_memories:
             sections.append(
                 "Core/profile memories. Treat these as stable identity or high-priority facts:\n"
@@ -527,8 +578,10 @@ class ContextPackage:
             "Do not reveal restricted or narrator-only lore unless it appears in the provided lorebook context.\n"
             "- Entity-state context is structured current state about entities from this agent\'s perspective. "
             "Use it only when relevant to the current response.\n"
+            "- Knowledge relations are links between memories, goals, lorebook, entity states, and other knowledge nodes. "
+            "Use them as supporting structure only when they clarify the current response.\n"
             "- If context conflicts, prefer explicit system instructions, then goals/plans, then lorebook/world knowledge, "
-            "then entity-state context, then core/profile memories, then semantic memories, then episodic memories, then raw memories.\n"
+            "then entity-state context, then knowledge relations, then core/profile memories, then semantic memories, then episodic memories, then raw memories.\n"
             "- Keep the response natural and useful."
         )
 
@@ -567,6 +620,14 @@ class ContextBuilder:
         include_goals: bool = False,
         goal_limit: int = 10,
         goal_status: str | None = None,
+        include_knowledge_relations: bool = False,
+        knowledge_relation_limit: int = 10,
+        knowledge_relation_world_id: str | None = None,
+        knowledge_relation_source_type: str | None = None,
+        knowledge_relation_source_id: str | None = None,
+        knowledge_relation_target_type: str | None = None,
+        knowledge_relation_target_id: str | None = None,
+        knowledge_relation_type: str | None = None,
         world_id: str = "default",
         lorebook_limit: int = 0,
         include_public_lore: bool = True,
@@ -617,7 +678,7 @@ class ContextBuilder:
                 update_access=update_memory_access,
             )
 
-        """goal_items: list[AgentGoalRead] = []
+        goal_items: list[AgentGoalRead] = []
         if include_goals and goal_limit > 0:
             goal_records = GoalService(self.db).list_goals(
                 agent_id=agent_id,
@@ -625,19 +686,22 @@ class ContextBuilder:
                 include_inactive=False,
                 limit=goal_limit,
             )
-            goal_items = goal_reads_from_records(goal_records)"""
+            goal_items = goal_reads_from_records(goal_records)
 
-        goal_records = []
-
-        if include_goals and goal_limit > 0:
-            goal_records = GoalService(self.db).list_goals(
-                agent_id=agent.id,
-                status=goal_status,
+        knowledge_relation_items: list[KnowledgeRelationRead] = []
+        if include_knowledge_relations and knowledge_relation_limit > 0:
+            knowledge_relation_records = KnowledgeRelationService(self.db).list_relations(
+                agent_id=agent_id,
+                world_id=knowledge_relation_world_id if knowledge_relation_world_id is not None else world_id,
+                source_type=knowledge_relation_source_type,
+                source_id=knowledge_relation_source_id,
+                target_type=knowledge_relation_target_type,
+                target_id=knowledge_relation_target_id,
+                relation_type=knowledge_relation_type,
                 include_inactive=False,
-                limit=goal_limit,
+                limit=knowledge_relation_limit,
             )
-
-        goal_items = goal_reads_from_records(goal_records)
+            knowledge_relation_items = knowledge_relation_reads_from_records(knowledge_relation_records)
 
         lorebook_items: list[LorebookContextItem] = []
         if lorebook_limit > 0:
@@ -681,6 +745,7 @@ class ContextBuilder:
             episodic_memories=deduped.episodic_memories,
             raw_memories=list(deduped.raw_memories),
             goal_items=list(goal_items),
+            knowledge_relation_items=list(knowledge_relation_items),
             lorebook_items=list(lorebook_items),
             entity_state_items=list(entity_state_items),
             dedup_removed_memories=list(deduped.removed),
@@ -690,6 +755,7 @@ class ContextBuilder:
             retrieved_episodic_memories=list(episodic_memories),
             retrieved_raw_memories=list(raw_memories),
             retrieved_goal_items=list(goal_items),
+            retrieved_knowledge_relation_items=list(knowledge_relation_items),
             retrieved_lorebook_items=list(lorebook_items),
             retrieved_entity_state_items=list(entity_state_items),
             post_dedup_short_term_messages=list(short_term_messages),
@@ -698,6 +764,7 @@ class ContextBuilder:
             post_dedup_episodic_memories=list(deduped.episodic_memories),
             post_dedup_raw_memories=list(deduped.raw_memories),
             post_dedup_goal_items=list(goal_items),
+            post_dedup_knowledge_relation_items=list(knowledge_relation_items),
             post_dedup_lorebook_items=list(lorebook_items),
             post_dedup_entity_state_items=list(entity_state_items),
         )

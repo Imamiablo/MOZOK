@@ -10,6 +10,7 @@ from mozok.schemas.chat import ChatRequest, ChatResponse
 from mozok.schemas.context import ContextDebugRequest
 from mozok.api.entity_state_routes import router as entity_state_router
 from mozok.api.goal_routes import router as goal_router
+from mozok.api.knowledge_relation_routes import router as knowledge_relation_router
 from mozok.api.lorebook_routes import router as lorebook_router
 from mozok.schemas.memory import (
     MemoryCreate,
@@ -27,6 +28,7 @@ app = FastAPI(title="Mozok", version="0.2.0")
 
 app.include_router(entity_state_router)
 app.include_router(goal_router)
+app.include_router(knowledge_relation_router)
 app.include_router(lorebook_router)
 
 @app.get("/")
@@ -153,6 +155,14 @@ def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
         include_goals=data.include_goals,
         goal_limit=data.goal_limit,
         goal_status=data.goal_status,
+        include_knowledge_relations=data.include_knowledge_relations,
+        knowledge_relation_limit=data.knowledge_relation_limit,
+        knowledge_relation_world_id=data.knowledge_relation_world_id,
+        knowledge_relation_source_type=data.knowledge_relation_source_type,
+        knowledge_relation_source_id=data.knowledge_relation_source_id,
+        knowledge_relation_target_type=data.knowledge_relation_target_type,
+        knowledge_relation_target_id=data.knowledge_relation_target_id,
+        knowledge_relation_type=data.knowledge_relation_type,
         world_id=data.world_id,
         lorebook_limit=data.lorebook_limit,
         include_public_lore=data.include_public_lore,
@@ -183,6 +193,14 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             include_goals=data.include_goals,
             goal_limit=data.goal_limit,
             goal_status=data.goal_status,
+            include_knowledge_relations=data.include_knowledge_relations,
+            knowledge_relation_limit=data.knowledge_relation_limit,
+            knowledge_relation_world_id=data.knowledge_relation_world_id,
+            knowledge_relation_source_type=data.knowledge_relation_source_type,
+            knowledge_relation_source_id=data.knowledge_relation_source_id,
+            knowledge_relation_target_type=data.knowledge_relation_target_type,
+            knowledge_relation_target_id=data.knowledge_relation_target_id,
+            knowledge_relation_type=data.knowledge_relation_type,
             world_id=data.world_id,
             lorebook_limit=data.lorebook_limit,
             include_public_lore=data.include_public_lore,

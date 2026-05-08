@@ -119,7 +119,7 @@ class ContextBudgeter:
     - it returns a debug report explaining what happened.
 
     Trim order:
-        raw -> episodic -> semantic -> lorebook -> entity-state -> goals -> short-term oldest messages -> core only if allowed
+        raw -> episodic -> knowledge-relations -> semantic -> lorebook -> entity-state -> goals -> short-term oldest messages -> core only if allowed
     """
 
     def __init__(self, policy: ContextBudgetPolicy | None = None):
@@ -148,6 +148,7 @@ class ContextBudgeter:
         trim_plan = [
             ("raw", "raw_memories", "context_budget_exceeded_trim_raw_first"),
             ("episodic", "episodic_memories", "context_budget_exceeded_trim_weak_episodic"),
+            ("knowledge_relation", "knowledge_relation_items", "context_budget_exceeded_trim_knowledge_relation_before_core_context"),
             ("semantic", "semantic_memories", "context_budget_exceeded_trim_weak_semantic"),
             ("lorebook", "lorebook_items", "context_budget_exceeded_trim_lorebook_after_memories"),
             ("entity_state", "entity_state_items", "context_budget_exceeded_trim_entity_state_after_lorebook"),
@@ -222,6 +223,17 @@ class ContextBudgeter:
             description = getattr(item, "description", "")
             notes = getattr(item, "notes", "")
             return f"{title} | goal_key={goal_key} | status={status} | priority={priority} | description={description} | notes={notes}"
+
+        # KnowledgeRelationRead objects do not have a single content field; use a compact
+        # stable representation so trimming reports remain useful.
+        relation_type = getattr(item, "relation_type", None)
+        source_type = getattr(item, "source_type", None)
+        target_type = getattr(item, "target_type", None)
+        if relation_type is not None and source_type is not None and target_type is not None:
+            source_id = getattr(item, "source_id", "")
+            target_id = getattr(item, "target_id", "")
+            description = getattr(item, "description", "")
+            return f"{source_type}:{source_id} {relation_type} {target_type}:{target_id} | description={description}"
 
         # EntityStateRead objects do not have a single content field; use a compact
         # stable representation so trimming reports remain useful.

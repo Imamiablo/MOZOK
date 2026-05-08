@@ -43,6 +43,27 @@ class ContextDebugRequest(BaseModel):
         examples=["active"],
     )
 
+    include_knowledge_relations: bool = Field(
+        default=False,
+        description="If true, include knowledge relation graph edges for this agent in the prompt.",
+    )
+    knowledge_relation_limit: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="How many knowledge relations to include. Use 0 to disable relation context.",
+    )
+    knowledge_relation_world_id: str | None = Field(
+        default=None,
+        description="Optional world filter for knowledge relations. Null uses world_id.",
+        examples=["default", "from_like_world"],
+    )
+    knowledge_relation_source_type: str | None = Field(default=None, examples=["goal", "memory", "lorebook"])
+    knowledge_relation_source_id: str | None = Field(default=None, examples=["hide_tunnel_secret", "42", "old_well"])
+    knowledge_relation_target_type: str | None = Field(default=None, examples=["lorebook", "entity_state", "goal"])
+    knowledge_relation_target_id: str | None = Field(default=None, examples=["old_well", "17"])
+    knowledge_relation_type: str | None = Field(default=None, examples=["depends_on", "evidence_for", "contradicts"])
+
     world_id: str = Field(
         "default",
         description="Lorebook world/campaign ID to use when selecting world knowledge.",
