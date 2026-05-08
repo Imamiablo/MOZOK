@@ -63,6 +63,19 @@ class ContextDebugRequest(BaseModel):
     knowledge_relation_target_type: str | None = Field(default=None, examples=["lorebook", "entity_state", "goal"])
     knowledge_relation_target_id: str | None = Field(default=None, examples=["old_well", "17"])
     knowledge_relation_type: str | None = Field(default=None, examples=["depends_on", "evidence_for", "contradicts"])
+    include_related_knowledge_relations: bool = Field(
+        default=False,
+        description=(
+            "If true, add direct one-hop knowledge relations touching goals, lorebook entries, "
+            "entity states, or memories already selected for this context."
+        ),
+    )
+    related_knowledge_relation_limit: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="Maximum number of auto-expanded one-hop knowledge relations to include.",
+    )
 
     world_id: str = Field(
         "default",

@@ -147,10 +147,24 @@ def test_context_package_pipeline_steps_show_retrieved_dedup_budget_and_final_pr
 
     steps = package.pipeline_steps()
 
-    assert [step["step"] for step in steps] == ["retrieved", "deduped", "budget_trimmed", "final_prompt"]
+    assert [step["step"] for step in steps] == [
+        "retrieved",
+        "deduped",
+        "related_relations_expanded",
+        "budget_trimmed",
+        "final_prompt",
+    ]
     assert steps[0]["counts"]["total_long_term_memories"] == 4
     assert steps[1]["status"] == "changed"
     assert steps[1]["removed_memory_ids"] == [47]
+
+    # New Knowledge Relations V2 pipeline step.
+    assert steps[2]["step"] == "related_relations_expanded"
     assert steps[2]["status"] == "ok"
+
+    assert steps[3]["step"] == "budget_trimmed"
     assert steps[3]["status"] == "ok"
-    assert steps[3]["used_memory_ids"] == [46, 45, 48]
+
+    assert steps[4]["step"] == "final_prompt"
+    assert steps[4]["status"] == "ok"
+    assert steps[4]["used_memory_ids"] == [46, 45, 48]

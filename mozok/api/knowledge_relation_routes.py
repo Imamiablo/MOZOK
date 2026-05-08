@@ -11,8 +11,10 @@ from mozok.knowledge_relations.service import (
 )
 from mozok.schemas.knowledge_relations import (
     KnowledgeRelationContextResponse,
+    KnowledgeRelationNeighborhoodResponse,
     KnowledgeRelationPatch,
     KnowledgeRelationRead,
+    KnowledgeRelationResolvedResponse,
     KnowledgeRelationUpsert,
 )
 
@@ -22,7 +24,10 @@ router = APIRouter(tags=["knowledge-relations"])
 
 @router.post("/knowledge-relations/upsert", response_model=KnowledgeRelationRead)
 def upsert_knowledge_relation(data: KnowledgeRelationUpsert, db: Session = Depends(get_db)):
-    record = KnowledgeRelationService(db).upsert(data)
+    try:
+        record = KnowledgeRelationService(db).upsert(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return KnowledgeRelationRead.from_record(record)
 
 
@@ -40,6 +45,18 @@ def delete_knowledge_relation(relation_id: int, db: Session = Depends(get_db)):
     if not ok:
         raise HTTPException(status_code=404, detail="Knowledge relation not found")
     return {"deleted": True, "relation_id": relation_id}
+
+
+@router.get("/knowledge-relations/{relation_id}/resolved", response_model=KnowledgeRelationResolvedResponse)
+def get_resolved_knowledge_relation(relation_id: int, db: Session = Depends(get_db)):
+    relation, source, target = KnowledgeRelationService(db).resolve_relation(relation_id)
+    if relation is None or source is None or target is None:
+        raise HTTPException(status_code=404, detail="Knowledge relation not found")
+    return KnowledgeRelationResolvedResponse(
+        relation=KnowledgeRelationRead.from_record(relation),
+        source=source,
+        target=target,
+    )
 
 
 @router.get("/agents/{agent_id}/knowledge-relations", response_model=list[KnowledgeRelationRead])
@@ -99,5 +116,38 @@ def get_agent_knowledge_relations_context(
         world_id=world_id,
         count=len(relations),
         lines=lines,
+        relations=relations,
+    )
+
+
+@router.get("/agents/{agent_id}/knowledge-relations/neighborhood", response_model=KnowledgeRelationNeighborhoodResponse)
+def get_agent_knowledge_relation_neighborhood(
+    agent_id: str,
+    node_type: str = Query(..., examples=["goal", "lorebook", "entity_state", "memory"]),
+    node_id: str = Query(..., examples=["hide_tunnel_secret", "old_well", "17", "42"]),
+    world_id: str | None = Query(default=None),
+    direction: str = Query(default="both", examples=["both", "incoming", "outgoing"]),
+    include_inactive: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    records = KnowledgeRelationService(db).list_neighborhood(
+        agent_id=agent_id,
+        world_id=world_id,
+        node_type=node_type,
+        node_id=node_id,
+        direction=direction,
+        include_inactive=include_inactive,
+        limit=limit,
+    )
+    relations = reads_from_records(records)
+    return KnowledgeRelationNeighborhoodResponse(
+        agent_id=agent_id,
+        world_id=world_id,
+        node_type=node_type,
+        node_id=node_id,
+        direction=direction,
+        count=len(relations),
+        lines=[format_knowledge_relation_for_prompt_line(relation) for relation in relations],
         relations=relations,
     )

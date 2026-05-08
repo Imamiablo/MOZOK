@@ -60,6 +60,13 @@ class KnowledgeRelationUpsert(BaseModel):
     description: str = ""
     evidence: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    validate_nodes: bool = Field(
+        default=False,
+        description=(
+            "If true, known node types such as goal, lorebook, entity_state, and memory "
+            "must already exist. Keep false for flexible/manual graph building."
+        ),
+    )
 
 
 class KnowledgeRelationPatch(BaseModel):
@@ -113,6 +120,33 @@ class KnowledgeRelationRead(BaseModel):
 class KnowledgeRelationContextResponse(BaseModel):
     agent_id: str
     world_id: str | None = None
+    count: int
+    lines: list[str]
+    relations: list[KnowledgeRelationRead]
+
+
+class KnowledgeNodeResolution(BaseModel):
+    found: bool
+    node_type: str
+    node_id: str
+    title: str = ""
+    summary: str = ""
+    data: dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+
+class KnowledgeRelationResolvedResponse(BaseModel):
+    relation: KnowledgeRelationRead
+    source: KnowledgeNodeResolution
+    target: KnowledgeNodeResolution
+
+
+class KnowledgeRelationNeighborhoodResponse(BaseModel):
+    agent_id: str
+    world_id: str | None = None
+    node_type: str
+    node_id: str
+    direction: str
     count: int
     lines: list[str]
     relations: list[KnowledgeRelationRead]

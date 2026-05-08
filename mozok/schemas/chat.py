@@ -55,6 +55,19 @@ class ChatRequest(BaseModel):
     knowledge_relation_target_type: str | None = Field(default=None, examples=["lorebook", "entity_state", "goal"])
     knowledge_relation_target_id: str | None = Field(default=None, examples=["old_well", "17"])
     knowledge_relation_type: str | None = Field(default=None, examples=["depends_on", "evidence_for", "contradicts"])
+    include_related_knowledge_relations: bool = Field(
+        default=False,
+        description=(
+            "If true, add direct one-hop knowledge relations touching goals, lorebook entries, "
+            "entity states, or memories already selected for this context."
+        ),
+    )
+    related_knowledge_relation_limit: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="Maximum number of auto-expanded one-hop knowledge relations to include.",
+    )
 
     world_id: str = Field(
         "default",
@@ -129,6 +142,10 @@ class ChatResponse(BaseModel):
     used_goals_count: int = 0
     used_knowledge_relation_ids: list[int] = Field(default_factory=list)
     used_knowledge_relations_count: int = 0
+    explicit_knowledge_relation_ids: list[int] = Field(default_factory=list)
+    explicit_knowledge_relations_count: int = 0
+    auto_expanded_knowledge_relation_ids: list[int] = Field(default_factory=list)
+    auto_expanded_knowledge_relations_count: int = 0
     used_lorebook_entry_ids: list[int] = Field(default_factory=list)
     used_lorebook_entries_count: int = 0
     used_entity_state_ids: list[int] = Field(default_factory=list)
