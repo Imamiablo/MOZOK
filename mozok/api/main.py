@@ -13,6 +13,7 @@ from mozok.api.goal_routes import router as goal_router
 from mozok.api.knowledge_relation_routes import router as knowledge_relation_router
 from mozok.api.procedural_skill_routes import router as procedural_skill_router
 from mozok.api.lorebook_routes import router as lorebook_router
+from mozok.api.brain_pack_routes import router as brain_pack_router
 from mozok.schemas.memory import (
     MemoryCreate,
     MemoryForgetRequest,
@@ -32,6 +33,7 @@ app.include_router(goal_router)
 app.include_router(knowledge_relation_router)
 app.include_router(procedural_skill_router)
 app.include_router(lorebook_router)
+app.include_router(brain_pack_router)
 
 @app.get("/")
 def root():
