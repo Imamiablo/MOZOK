@@ -1,14 +1,139 @@
-.venv/
+# ========================================
+# Python
+# ========================================
+
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Python build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Pip / tools
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ========================================
+# Environment / secrets
+# ========================================
+
 .env
-data/
-*.db
+.env.*
+!.env.example
+
+# ========================================
+# IDE / editors
+# ========================================
+
 .idea/
-node_modules/
 .vscode/
+*.sublime-project
+*.sublime-workspace
+
+# ========================================
+# OS files
+# ========================================
+
 .DS_Store
-Extras/
+Thumbs.db
+desktop.ini
 
+# ========================================
+# Logs
+# ========================================
 
+logs/
+*.log
 
+# Keep folder placeholders if you use them
+!logs/.gitkeep
+
+# ========================================
+# Runtime data / generated indexes
+# ========================================
+
+# FAISS runtime files
+data/faiss.index
+data/faiss_mapping.json
+data/*.index
+data/*.faiss
+data/*_mapping.json
+
+# Local databases / temporary DB files
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Keep brain packs tracked
+!data/brain_packs/
+!data/brain_packs/**
+
+# ========================================
+# Hugging Face / ML cache files, if accidentally created inside project
+# ========================================
+
+.cache/
+hf_cache/
+huggingface/
+models/
+checkpoints/
+
+# ========================================
+# FastAPI / Uvicorn / local runtime
+# ========================================
+
+*.pid
+uvicorn*.log
+
+# ========================================
+# Docker / installers / local extras
+# ========================================
+
+Extras/*.exe
+Extras/*.msi
+Extras/*.zip
+Extras/*.7z
+Extras/*.rar
+
+# Keep documentation in Extras if needed
+!Extras/readme.txt
+!Extras/README.md
+
+# ========================================
+# Test / temp files
+# ========================================
+
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+
+# ========================================
+# Jupyter, just in case
+# ========================================
+
+.ipynb_checkpoints/
