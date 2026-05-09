@@ -14,6 +14,7 @@ from mozok.schemas.procedural_skills import (
     AgentProceduralSkillRead,
     AgentProceduralSkillUpsert,
     ProceduralSkillContextResponse,
+    ProceduralSkillSelectionResponse,
 )
 
 
@@ -80,6 +81,42 @@ def procedural_skill_context(
     return ProceduralSkillContextResponse(
         agent_id=agent_id,
         count=len(skills),
+        lines=[format_procedural_skill_for_prompt_line(skill) for skill in skills],
+        skills=skills,
+    )
+
+
+@router.get("/agents/{agent_id}/procedural-skills/select", response_model=ProceduralSkillSelectionResponse)
+def select_procedural_skills(
+    agent_id: str,
+    message: str = Query(default="", description="Current user message or scene text used for trigger keyword matching."),
+    skill_type: str | None = None,
+    status: str | None = Query(default="active"),
+    goal_keys: list[str] = Query(default=[]),
+    lorebook_keys: list[str] = Query(default=[]),
+    entity_ids: list[str] = Query(default=[]),
+    min_score: float = Query(default=1.0, ge=0.0, le=100.0),
+    fallback_to_priority: bool = True,
+    limit: int = Query(default=5, ge=0, le=50),
+    db: Session = Depends(get_db),
+):
+    records, selection = ProceduralSkillService(db).select_relevant_skills(
+        agent_id=agent_id,
+        user_message=message,
+        skill_type=skill_type,
+        status=status,
+        goal_keys=goal_keys,
+        lorebook_keys=lorebook_keys,
+        entity_ids=entity_ids,
+        limit=limit,
+        min_score=min_score,
+        fallback_to_priority=fallback_to_priority,
+    )
+    skills = reads_from_records(records)
+    return ProceduralSkillSelectionResponse(
+        agent_id=agent_id,
+        count=len(skills),
+        selection=selection,
         lines=[format_procedural_skill_for_prompt_line(skill) for skill in skills],
         skills=skills,
     )

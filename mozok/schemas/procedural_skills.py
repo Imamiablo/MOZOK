@@ -108,3 +108,24 @@ class ProceduralSkillContextResponse(BaseModel):
     count: int
     lines: list[str]
     skills: list[AgentProceduralSkillRead]
+
+
+class ProceduralSkillSelectionDetail(BaseModel):
+    procedural_skill_id: int
+    skill_key: str
+    title: str
+    score: float
+    reasons: list[str] = Field(default_factory=list)
+    matched_keywords: list[str] = Field(default_factory=list)
+    matched_goal_keys: list[str] = Field(default_factory=list)
+    matched_lorebook_keys: list[str] = Field(default_factory=list)
+    matched_entity_ids: list[str] = Field(default_factory=list)
+    fallback_selected: bool = False
+
+
+class ProceduralSkillSelectionResponse(BaseModel):
+    agent_id: str
+    count: int
+    selection: list[ProceduralSkillSelectionDetail]
+    lines: list[str]
+    skills: list[AgentProceduralSkillRead]

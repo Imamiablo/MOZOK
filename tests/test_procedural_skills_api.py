@@ -131,3 +131,39 @@ def test_skill_does_not_leak_between_agents(client: TestClient):
 
     assert alice.json()["count"] == 1
     assert bob.json()["count"] == 0
+
+
+def test_select_endpoint_scores_trigger_keywords_and_fallback(client: TestClient):
+    first = client.post("/procedural-skills/upsert", json=_payload()).json()
+    second_payload = _payload(
+        skill_key="explain_herbal_medicine",
+        title="Explain herbal medicine",
+        skill_type="teaching",
+        priority=9,
+        description="Explain safe use of herbs and remedies.",
+        trigger={"when": "Someone asks about healing herbs.", "keywords": ["herb", "medicine", "healing"]},
+        procedure=["Explain the herb clearly."],
+        related_goal_keys=[],
+        related_entity_ids=[],
+        related_lorebook_keys=["moonflower"],
+    )
+    client.post("/procedural-skills/upsert", json=second_payload)
+
+    selected = client.get(
+        "/agents/npc_alice/procedural-skills/select",
+        params={"message": "What do you know about the old well and tunnels?", "limit": 1},
+    )
+    assert selected.status_code == 200, selected.text
+    body = selected.json()
+    assert body["count"] == 1
+    assert body["skills"][0]["id"] == first["id"]
+    assert body["selection"][0]["skill_key"] == "deflect_dangerous_questions"
+    assert body["selection"][0]["matched_keywords"]
+
+    fallback = client.get(
+        "/agents/npc_alice/procedural-skills/select",
+        params={"message": "Nothing here matches.", "limit": 1, "fallback_to_priority": True},
+    )
+    assert fallback.status_code == 200, fallback.text
+    assert fallback.json()["count"] == 1
+    assert fallback.json()["selection"][0]["fallback_selected"] is True

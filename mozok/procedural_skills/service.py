@@ -12,6 +12,7 @@ from mozok.schemas.procedural_skills import (
     AgentProceduralSkillPatch,
     AgentProceduralSkillRead,
     AgentProceduralSkillUpsert,
+    ProceduralSkillSelectionDetail,
 )
 
 
@@ -23,6 +24,29 @@ def _clean_key(value: str, fallback: str = "item") -> str:
     clean = " ".join(str(value or "").strip().split())
     return clean or fallback
 
+
+
+
+def _norm_text(value: Any) -> str:
+    return " ".join(str(value or "").lower().replace("_", " ").replace("-", " ").split())
+
+
+def _as_clean_list(values: Iterable[Any] | None) -> list[str]:
+    result: list[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if text:
+            result.append(text)
+    return result
+
+
+def _trigger_keywords(trigger: dict[str, Any]) -> list[str]:
+    keywords = trigger.get("keywords", []) if trigger else []
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    if not isinstance(keywords, list):
+        return []
+    return _as_clean_list(keywords)
 
 def _compact(value: Any, max_chars: int = 240) -> str:
     text = str(value or "").replace("\n", " ").strip()
@@ -255,6 +279,162 @@ class ProceduralSkillService:
             .limit(max(1, min(int(limit), 200)))
             .all()
         )
+
+
+    def select_relevant_skills(
+        self,
+        agent_id: str,
+        user_message: str = "",
+        skill_type: str | None = None,
+        status: str | None = "active",
+        goal_keys: Iterable[str] | None = None,
+        lorebook_keys: Iterable[str] | None = None,
+        entity_ids: Iterable[str] | None = None,
+        limit: int = 5,
+        min_score: float = 1.0,
+        fallback_to_priority: bool = True,
+    ) -> tuple[list[AgentProceduralSkillRecord], list[ProceduralSkillSelectionDetail]]:
+        """Select skills that match the current turn and selected context.
+
+        This is a deterministic V2 selector. It does not call an LLM or embeddings.
+        It scores active skills by trigger keywords, related goal/lorebook/entity
+        references, and a small priority tie-breaker. If nothing matches, it can
+        fall back to top-priority active skills so old behavior remains available.
+        """
+
+        safe_limit = max(0, min(int(limit), 50))
+        if safe_limit <= 0:
+            return [], []
+
+        candidates = self.list_skills(
+            agent_id=agent_id,
+            skill_type=skill_type,
+            status=status,
+            include_inactive=False,
+            limit=200,
+        )
+
+        message_text = _norm_text(user_message)
+        goal_key_set = {_norm_text(item) for item in _as_clean_list(goal_keys)}
+        lorebook_key_set = {_norm_text(item) for item in _as_clean_list(lorebook_keys)}
+        entity_id_set = {_norm_text(item) for item in _as_clean_list(entity_ids)}
+
+        scored: list[tuple[float, int, AgentProceduralSkillRecord, ProceduralSkillSelectionDetail]] = []
+        fallback_details: list[tuple[int, AgentProceduralSkillRecord, ProceduralSkillSelectionDetail]] = []
+
+        for record in candidates:
+            trigger = dict(record.trigger_json or {})
+            related_goal_keys = _as_clean_list(record.related_goal_keys_json or [])
+            related_lorebook_keys = _as_clean_list(record.related_lorebook_keys_json or [])
+            related_entity_ids = _as_clean_list(record.related_entity_ids_json or [])
+
+            score = 0.0
+            reasons: list[str] = []
+            matched_keywords: list[str] = []
+            matched_goal_keys: list[str] = []
+            matched_lorebook_keys: list[str] = []
+            matched_entity_ids: list[str] = []
+
+            for keyword in _trigger_keywords(trigger):
+                normalized = _norm_text(keyword)
+                if normalized and normalized in message_text:
+                    matched_keywords.append(keyword)
+            if matched_keywords:
+                gain = 3.0 + min(len(matched_keywords), 5)
+                score += gain
+                reasons.append("trigger keyword match: " + ", ".join(matched_keywords[:5]))
+
+            trigger_when = _norm_text(trigger.get("when", ""))
+            if trigger_when:
+                # Keep this intentionally conservative: only count short meaningful
+                # words from the trigger sentence that appear in the user message.
+                words = [w for w in trigger_when.split() if len(w) >= 5]
+                overlap = [w for w in words[:30] if w in message_text]
+                if overlap:
+                    score += min(2.0, 0.35 * len(set(overlap)))
+                    reasons.append("trigger description overlaps current message")
+
+            for goal_key in related_goal_keys:
+                if _norm_text(goal_key) in goal_key_set:
+                    matched_goal_keys.append(goal_key)
+            applies = trigger.get("applies_to_goal_keys", [])
+            if isinstance(applies, str):
+                applies = [applies]
+            if isinstance(applies, list):
+                for goal_key in _as_clean_list(applies):
+                    if _norm_text(goal_key) in goal_key_set and goal_key not in matched_goal_keys:
+                        matched_goal_keys.append(goal_key)
+            if matched_goal_keys:
+                score += 4.0 + min(len(matched_goal_keys), 4)
+                reasons.append("related active goal: " + ", ".join(matched_goal_keys[:5]))
+
+            for lore_key in related_lorebook_keys:
+                norm_lore_key = _norm_text(lore_key)
+                if norm_lore_key in lorebook_key_set or norm_lore_key in message_text:
+                    matched_lorebook_keys.append(lore_key)
+
+                    # If a related lorebook key is directly mentioned in the user message,
+                    # expose it as a keyword-style match too. This makes debug output explain
+                    # why the skill was selected even when trigger["keywords"] is empty/missing.
+                    if norm_lore_key in message_text and lore_key not in matched_keywords:
+                        matched_keywords.append(lore_key)
+
+            if matched_lorebook_keys:
+                score += 3.0 + min(len(matched_lorebook_keys), 4)
+                reasons.append("related lorebook key: " + ", ".join(matched_lorebook_keys[:5]))
+
+            for entity_id in related_entity_ids:
+                norm = _norm_text(entity_id)
+                if norm in entity_id_set or norm in message_text:
+                    matched_entity_ids.append(entity_id)
+
+                    # Same idea as lorebook keys: if the current message names a related
+                    # entity directly, show it in matched_keywords for easier debugging.
+                    if norm in message_text and entity_id not in matched_keywords:
+                        matched_keywords.append(entity_id)
+
+            if matched_entity_ids:
+                score += 2.5 + min(len(matched_entity_ids), 4)
+                reasons.append("related entity id: " + ", ".join(matched_entity_ids[:5]))
+
+            priority = int(record.priority or 0)
+            if score > 0:
+                score += min(priority, 100) / 100.0
+
+            detail = ProceduralSkillSelectionDetail(
+                procedural_skill_id=int(record.id),
+                skill_key=record.skill_key,
+                title=record.title or record.skill_key,
+                score=round(score, 3),
+                reasons=reasons,
+                matched_keywords=matched_keywords,
+                matched_goal_keys=matched_goal_keys,
+                matched_lorebook_keys=matched_lorebook_keys,
+                matched_entity_ids=matched_entity_ids,
+                fallback_selected=False,
+            )
+
+            if score >= float(min_score):
+                scored.append((score, priority, record, detail))
+            else:
+                fallback_detail = detail.model_copy(update={
+                    "score": round(min(priority, 100) / 100.0, 3),
+                    "reasons": ["fallback top-priority skill"],
+                    "fallback_selected": True,
+                })
+                fallback_details.append((priority, record, fallback_detail))
+
+        if scored:
+            scored.sort(key=lambda item: (item[0], item[1], item[2].updated_at), reverse=True)
+            selected = scored[:safe_limit]
+            return [item[2] for item in selected], [item[3] for item in selected]
+
+        if fallback_to_priority:
+            fallback_details.sort(key=lambda item: (item[0], item[1].updated_at), reverse=True)
+            selected_fallbacks = fallback_details[:safe_limit]
+            return [item[1] for item in selected_fallbacks], [item[2] for item in selected_fallbacks]
+
+        return [], []
 
     def format_context_lines(
         self,

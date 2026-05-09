@@ -47,6 +47,7 @@ class ContextPackage:
     raw_memories: list[MemorySearchResult] = field(default_factory=list)
     goal_items: list[AgentGoalRead] = field(default_factory=list)
     procedural_skill_items: list[AgentProceduralSkillRead] = field(default_factory=list)
+    procedural_skill_selection: list[dict] = field(default_factory=list)
     knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     explicit_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     auto_expanded_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
@@ -65,6 +66,7 @@ class ContextPackage:
     retrieved_raw_memories: list[MemorySearchResult] = field(default_factory=list)
     retrieved_goal_items: list[AgentGoalRead] = field(default_factory=list)
     retrieved_procedural_skill_items: list[AgentProceduralSkillRead] = field(default_factory=list)
+    retrieved_procedural_skill_selection: list[dict] = field(default_factory=list)
     retrieved_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     retrieved_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     retrieved_entity_state_items: list[EntityStateRead] = field(default_factory=list)
@@ -76,6 +78,7 @@ class ContextPackage:
     post_dedup_raw_memories: list[MemorySearchResult] = field(default_factory=list)
     post_dedup_goal_items: list[AgentGoalRead] = field(default_factory=list)
     post_dedup_procedural_skill_items: list[AgentProceduralSkillRead] = field(default_factory=list)
+    post_dedup_procedural_skill_selection: list[dict] = field(default_factory=list)
     post_dedup_knowledge_relation_items: list[KnowledgeRelationRead] = field(default_factory=list)
     post_dedup_lorebook_items: list[LorebookContextItem] = field(default_factory=list)
     post_dedup_entity_state_items: list[EntityStateRead] = field(default_factory=list)
@@ -200,6 +203,7 @@ class ContextPackage:
                 ),
                 "goal_ids": self._goal_ids(self.retrieved_goal_items),
                 "procedural_skill_ids": self._procedural_skill_ids(self.retrieved_procedural_skill_items),
+                "procedural_skill_selection": self.retrieved_procedural_skill_selection,
                 "knowledge_relation_ids": self._knowledge_relation_ids(self.retrieved_knowledge_relation_items),
                 "lorebook_entry_ids": self._lorebook_entry_ids(self.retrieved_lorebook_items),
                 "entity_state_ids": self._entity_state_ids(self.retrieved_entity_state_items),
@@ -248,6 +252,7 @@ class ContextPackage:
                 "used_memory_ids": self.used_memory_ids(),
                 "used_goal_ids": self.used_goal_ids(),
                 "used_procedural_skill_ids": self.used_procedural_skill_ids(),
+                "procedural_skill_selection": self.procedural_skill_selection,
                 "used_knowledge_relation_ids": self.used_knowledge_relation_ids(),
                 "used_lorebook_entry_ids": self.used_lorebook_entry_ids(),
                 "used_entity_state_ids": self.used_entity_state_ids(),
@@ -367,6 +372,7 @@ class ContextPackage:
             "used_goals_count": len(self.goal_items),
             "used_procedural_skill_ids": self.used_procedural_skill_ids(),
             "used_procedural_skills_count": len(self.procedural_skill_items),
+            "procedural_skill_selection": self.procedural_skill_selection,
             "used_knowledge_relation_ids": self.used_knowledge_relation_ids(),
             "used_knowledge_relations_count": len(self.knowledge_relation_items),
             "explicit_knowledge_relation_ids": self.explicit_knowledge_relation_ids(),
@@ -403,6 +409,7 @@ class ContextPackage:
                 "raw_memories": [self._memory_to_debug_dict(memory, source="raw") for memory in self.raw_memories],
                 "goals": [self._goal_to_debug_dict(item) for item in self.goal_items],
                 "procedural_skills": [self._procedural_skill_to_debug_dict(item) for item in self.procedural_skill_items],
+                "procedural_skill_selection": self.procedural_skill_selection,
                 "knowledge_relations": [self._knowledge_relation_to_debug_dict(item) for item in self.knowledge_relation_items],
                 "lorebook": [self._lorebook_to_debug_dict(item) for item in self.lorebook_items],
                 "entity_states": [self._entity_state_to_debug_dict(item) for item in self.entity_state_items],
@@ -702,6 +709,9 @@ class ContextBuilder:
         procedural_skill_limit: int = 5,
         procedural_skill_type: str | None = None,
         procedural_skill_status: str | None = "active",
+        select_relevant_procedural_skills: bool = False,
+        procedural_skill_min_score: float = 1.0,
+        procedural_skill_fallback_to_priority: bool = True,
         include_knowledge_relations: bool = False,
         knowledge_relation_limit: int = 10,
         knowledge_relation_world_id: str | None = None,
@@ -772,17 +782,6 @@ class ContextBuilder:
             )
             goal_items = goal_reads_from_records(goal_records)
 
-        procedural_skill_items: list[AgentProceduralSkillRead] = []
-        if include_procedural_skills and procedural_skill_limit > 0:
-            procedural_skill_records = ProceduralSkillService(self.db).list_skills(
-                agent_id=agent_id,
-                skill_type=procedural_skill_type,
-                status=procedural_skill_status,
-                include_inactive=False,
-                limit=procedural_skill_limit,
-            )
-            procedural_skill_items = procedural_skill_reads_from_records(procedural_skill_records)
-
         explicit_knowledge_relation_items: list[KnowledgeRelationRead] = []
         if include_knowledge_relations and knowledge_relation_limit > 0:
             knowledge_relation_records = KnowledgeRelationService(self.db).list_relations(
@@ -818,6 +817,36 @@ class ContextBuilder:
                 limit=entity_state_limit,
             )
             entity_state_items = reads_from_records(entity_state_records)
+
+
+        procedural_skill_items: list[AgentProceduralSkillRead] = []
+        procedural_skill_selection: list[dict] = []
+        if include_procedural_skills and procedural_skill_limit > 0:
+            skill_service = ProceduralSkillService(self.db)
+            if select_relevant_procedural_skills:
+                selected_skill_records, selection_details = skill_service.select_relevant_skills(
+                    agent_id=agent_id,
+                    user_message=user_message,
+                    skill_type=procedural_skill_type,
+                    status=procedural_skill_status,
+                    goal_keys=[item.goal_key for item in goal_items],
+                    lorebook_keys=[item.entry_key for item in lorebook_items],
+                    entity_ids=[item.entity_id for item in entity_state_items],
+                    limit=procedural_skill_limit,
+                    min_score=procedural_skill_min_score,
+                    fallback_to_priority=procedural_skill_fallback_to_priority,
+                )
+                procedural_skill_items = procedural_skill_reads_from_records(selected_skill_records)
+                procedural_skill_selection = [item.model_dump() for item in selection_details]
+            else:
+                procedural_skill_records = skill_service.list_skills(
+                    agent_id=agent_id,
+                    skill_type=procedural_skill_type,
+                    status=procedural_skill_status,
+                    include_inactive=False,
+                    limit=procedural_skill_limit,
+                )
+                procedural_skill_items = procedural_skill_reads_from_records(procedural_skill_records)
 
         auto_expanded_knowledge_relation_items: list[KnowledgeRelationRead] = []
         if include_related_knowledge_relations and related_knowledge_relation_limit > 0:
@@ -868,6 +897,7 @@ class ContextBuilder:
             raw_memories=list(deduped.raw_memories),
             goal_items=list(goal_items),
             procedural_skill_items=list(procedural_skill_items),
+            procedural_skill_selection=list(procedural_skill_selection),
             knowledge_relation_items=list(knowledge_relation_items),
             explicit_knowledge_relation_items=list(explicit_knowledge_relation_items),
             auto_expanded_knowledge_relation_items=list(auto_expanded_knowledge_relation_items),
@@ -881,6 +911,7 @@ class ContextBuilder:
             retrieved_raw_memories=list(raw_memories),
             retrieved_goal_items=list(goal_items),
             retrieved_procedural_skill_items=list(procedural_skill_items),
+            retrieved_procedural_skill_selection=list(procedural_skill_selection),
             retrieved_knowledge_relation_items=list(knowledge_relation_items),
             retrieved_lorebook_items=list(lorebook_items),
             retrieved_entity_state_items=list(entity_state_items),
@@ -891,6 +922,7 @@ class ContextBuilder:
             post_dedup_raw_memories=list(deduped.raw_memories),
             post_dedup_goal_items=list(goal_items),
             post_dedup_procedural_skill_items=list(procedural_skill_items),
+            post_dedup_procedural_skill_selection=list(procedural_skill_selection),
             post_dedup_knowledge_relation_items=list(knowledge_relation_items),
             post_dedup_lorebook_items=list(lorebook_items),
             post_dedup_entity_state_items=list(entity_state_items),

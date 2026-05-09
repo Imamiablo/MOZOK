@@ -187,3 +187,120 @@ def test_token_budget_can_trim_procedural_skill_context():
     assert context.procedural_skill_items == []
     assert report.trimmed_items[-1].source == "procedural_skill"
     assert report.trimmed_items[-1].memory_id == 99
+
+
+def make_teaching_skill(agent_id: str = "npc_alice") -> AgentProceduralSkillUpsert:
+    return AgentProceduralSkillUpsert(
+        agent_id=agent_id,
+        skill_key="explain_herbal_medicine",
+        title="Explain herbal medicine",
+        skill_type="teaching",
+        status="active",
+        priority=9,
+        description="Explain safe use of herbs and remedies.",
+        trigger={"when": "Someone asks about healing herbs.", "keywords": ["herb", "medicine", "healing"]},
+        procedure=["Explain the herb clearly."],
+        related_goal_keys=[],
+        related_lorebook_keys=["moonflower"],
+        related_entity_ids=[],
+    )
+
+
+def test_relevant_procedural_skill_selection_prefers_matching_skill_over_priority():
+    db = make_db_session()
+    try:
+        ProceduralSkillService(db).upsert(make_skill())
+        ProceduralSkillService(db).upsert(make_teaching_skill())
+
+        context = ContextBuilder(db=db, memory_service=FakeMemoryService()).build(
+            agent=make_agent("npc_alice"),
+            user_message="What do you know about the old well and the tunnels?",
+            short_term_limit=0,
+            core_limit=0,
+            semantic_limit=0,
+            episodic_limit=0,
+            raw_limit=0,
+            update_memory_access=False,
+            enforce_token_budget=False,
+            include_procedural_skills=True,
+            procedural_skill_limit=1,
+            select_relevant_procedural_skills=True,
+            procedural_skill_fallback_to_priority=True,
+        )
+
+        assert context.used_procedural_skill_ids() == [1]
+        assert context.procedural_skill_items[0].skill_key == "deflect_dangerous_questions"
+        assert context.procedural_skill_selection[0]["skill_key"] == "deflect_dangerous_questions"
+        assert context.procedural_skill_selection[0]["matched_keywords"]
+        reasons_text = "; ".join(context.procedural_skill_selection[0]["reasons"])
+
+        assert (
+                "trigger keyword match" in reasons_text
+                or "trigger description overlaps current message" in reasons_text
+                or "related lorebook key" in reasons_text
+        )
+    finally:
+        db.close()
+
+
+def test_relevant_procedural_skill_selection_can_match_active_goal_key():
+    db = make_db_session()
+    try:
+        ProceduralSkillService(db).upsert(make_skill())
+        ProceduralSkillService(db).upsert(make_teaching_skill())
+
+        context = ContextBuilder(db=db, memory_service=FakeMemoryService()).build(
+            agent=make_agent("npc_alice"),
+            user_message="Please answer carefully.",
+            short_term_limit=0,
+            core_limit=0,
+            semantic_limit=0,
+            episodic_limit=0,
+            raw_limit=0,
+            update_memory_access=False,
+            enforce_token_budget=False,
+            include_goals=True,
+            goal_limit=10,
+            include_procedural_skills=True,
+            procedural_skill_limit=1,
+            select_relevant_procedural_skills=True,
+            procedural_skill_fallback_to_priority=False,
+        )
+
+        # No goals were created, so there is no related_goal_keys match and no fallback.
+        assert context.used_procedural_skill_ids() == []
+
+        from mozok.goals.service import GoalService
+        from mozok.schemas.goals import AgentGoalUpsert
+        GoalService(db).upsert(AgentGoalUpsert(
+            agent_id="npc_alice",
+            goal_key="hide_tunnel_secret",
+            title="Hide the tunnel secret",
+            goal_type="personal",
+            status="active",
+            priority=8,
+            description="Avoid revealing the well tunnels.",
+        ))
+
+        context = ContextBuilder(db=db, memory_service=FakeMemoryService()).build(
+            agent=make_agent("npc_alice"),
+            user_message="Please answer carefully.",
+            short_term_limit=0,
+            core_limit=0,
+            semantic_limit=0,
+            episodic_limit=0,
+            raw_limit=0,
+            update_memory_access=False,
+            enforce_token_budget=False,
+            include_goals=True,
+            goal_limit=10,
+            include_procedural_skills=True,
+            procedural_skill_limit=1,
+            select_relevant_procedural_skills=True,
+            procedural_skill_fallback_to_priority=False,
+        )
+
+        assert context.procedural_skill_items[0].skill_key == "deflect_dangerous_questions"
+        assert context.procedural_skill_selection[0]["matched_goal_keys"] == ["hide_tunnel_secret"]
+    finally:
+        db.close()

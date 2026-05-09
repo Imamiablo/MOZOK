@@ -63,6 +63,23 @@ class ContextDebugRequest(BaseModel):
         description="Optional procedural skill status filter, usually active.",
         examples=["active"],
     )
+    select_relevant_procedural_skills: bool = Field(
+        default=False,
+        description=(
+            "If true, score and select procedural skills by trigger keywords, active goals, "
+            "selected lorebook entries, and selected entity-state IDs instead of taking only top priority skills."
+        ),
+    )
+    procedural_skill_min_score: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=100.0,
+        description="Minimum deterministic relevance score required when select_relevant_procedural_skills is true.",
+    )
+    procedural_skill_fallback_to_priority: bool = Field(
+        default=True,
+        description="If true and no skill matches relevance filters, fall back to top-priority active skills.",
+    )
 
     include_knowledge_relations: bool = Field(
         default=False,
