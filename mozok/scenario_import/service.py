@@ -218,6 +218,38 @@ def load_brain_pack_file(path: str | Path, *, world_id: str | None = None) -> di
     raise ValueError(f"Unsupported brain pack file type: {file_path.suffix}. Use .json, .yaml/.yml, .txt, or .md.")
 
 
+
+_KNOWN_RELATION_NODE_TYPES = {
+    "memory",
+    "lorebook",
+    "entity_state",
+    "goal",
+    "procedural_skill",
+    "skill",
+    "agent",
+    "entity",
+    "faction",
+    "quest",
+    "location",
+    "object",
+    "concept",
+    "plan_step",
+}
+
+_STRICTLY_RESOLVABLE_NODE_TYPES = {"memory", "lorebook", "entity_state", "goal", "procedural_skill", "skill", "agent"}
+
+
+def _clean_agent_id_from_item(item: dict[str, Any]) -> str:
+    return str(item.get("agent_id") or item.get("id") or "").strip()
+
+
+def _validation_error_text(exc: ValidationError) -> str:
+    pieces = []
+    for error in exc.errors():
+        loc = ".".join(str(part) for part in error.get("loc", [])) or "body"
+        pieces.append(f"{loc}: {error.get('msg', 'invalid value')}")
+    return "; ".join(pieces) or str(exc)
+
 class BrainPackImportService:
     """Import scenario/brain packs into Mozok.
 
@@ -278,11 +310,15 @@ class BrainPackImportService:
         dry_run: bool = True,
         base_dir: str | Path | None = None,
         validate_relations: bool = False,
+        atomic: bool = True,
     ) -> BrainPackImportReport:
         normalized = self.normalize_pack(pack, base_dir=base_dir)
         world_id = str(normalized.get("world_id") or "default")
-        report = BrainPackImportReport(dry_run=bool(dry_run), world_id=world_id)
+        report = BrainPackImportReport(dry_run=bool(dry_run), atomic=bool(atomic), world_id=world_id)
         report.counts = {section: len(normalized.get(section) or []) for section in _COUNT_SECTIONS}
+
+        report.warnings.extend(self.preflight_warnings(normalized))
+        report.errors.extend(self.preflight_errors(normalized, validate_relations=validate_relations))
 
         if normalized.get("memories"):
             report.warnings.append(
@@ -298,6 +334,30 @@ class BrainPackImportService:
                     )
             return report
 
+        if report.errors:
+            report.actions.append(
+                BrainPackImportAction(
+                    section="preflight",
+                    action="aborted",
+                    key="",
+                    message="Import was not started because preflight validation reported errors.",
+                )
+            )
+            return report
+
+        if atomic:
+            return self._import_pack_atomic(normalized, report, validate_relations=validate_relations)
+
+        self._import_pack_sections(normalized, report, validate_relations=validate_relations)
+        return report
+
+    def _import_pack_sections(
+        self,
+        normalized: dict[str, Any],
+        report: BrainPackImportReport,
+        *,
+        validate_relations: bool,
+    ) -> None:
         self._import_agents(normalized, report)
         self._import_lorebook(normalized, report)
         self._import_agent_lorebook_knowledge(normalized, report)
@@ -305,7 +365,277 @@ class BrainPackImportService:
         self._import_goals(normalized, report)
         self._import_procedural_skills(normalized, report)
         self._import_knowledge_relations(normalized, report, validate_relations=validate_relations)
+
+    def _import_pack_atomic(
+        self,
+        normalized: dict[str, Any],
+        report: BrainPackImportReport,
+        *,
+        validate_relations: bool,
+    ) -> BrainPackImportReport:
+        """Import the whole pack as one logical transaction.
+
+        Existing service methods call ``commit()`` internally. For atomic brain
+        packs we temporarily turn those commits into ``flush()`` calls, then do
+        one real commit at the end. If any section records an error, everything
+        is rolled back.
+        """
+
+        real_commit = self.db.commit
+        real_rollback = self.db.rollback
+        real_commit_attr = getattr(self.db, "commit")
+        real_rollback_attr = getattr(self.db, "rollback")
+
+        def flush_instead_of_commit():
+            self.db.flush()
+
+        try:
+            self.db.commit = flush_instead_of_commit  # type: ignore[method-assign]
+            self._import_pack_sections(normalized, report, validate_relations=validate_relations)
+
+            self.db.commit = real_commit_attr  # type: ignore[method-assign]
+            self.db.rollback = real_rollback_attr  # type: ignore[method-assign]
+            if report.errors:
+                real_rollback()
+                report.actions.append(
+                    BrainPackImportAction(
+                        section="atomic",
+                        action="rolled_back",
+                        key="",
+                        message="Atomic import rolled back because one or more section imports failed.",
+                    )
+                )
+            else:
+                real_commit()
+                report.actions.append(
+                    BrainPackImportAction(
+                        section="atomic",
+                        action="committed",
+                        key="",
+                        message="Atomic import committed successfully.",
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001
+            self.db.commit = real_commit_attr  # type: ignore[method-assign]
+            self.db.rollback = real_rollback_attr  # type: ignore[method-assign]
+            real_rollback()
+            report.errors.append(f"atomic import failed and was rolled back: {exc}")
+            report.actions.append(
+                BrainPackImportAction(
+                    section="atomic",
+                    action="rolled_back",
+                    key="",
+                    message="Atomic import failed unexpectedly and was rolled back.",
+                )
+            )
+        finally:
+            self.db.commit = real_commit_attr  # type: ignore[method-assign]
+            self.db.rollback = real_rollback_attr  # type: ignore[method-assign]
+
         return report
+
+    def preflight_warnings(self, pack: dict[str, Any]) -> list[str]:
+        warnings: list[str] = []
+        if pack.get("memories"):
+            warnings.append("memories are present but will not be imported by this importer yet.")
+        if not pack.get("world_id"):
+            warnings.append("world_id is missing; importer will use 'default'.")
+        return warnings
+
+    def preflight_errors(self, pack: dict[str, Any], *, validate_relations: bool) -> list[str]:
+        errors: list[str] = []
+        errors.extend(self._validate_duplicate_keys(pack))
+        errors.extend(self._validate_payload_shapes(pack))
+        if validate_relations:
+            errors.extend(self._validate_relation_nodes_preflight(pack))
+        return errors
+
+    def _validate_duplicate_keys(self, pack: dict[str, Any]) -> list[str]:
+        errors: list[str] = []
+
+        def check(section: str, key_fn) -> None:
+            seen: dict[tuple[Any, ...], int] = {}
+            for index, item in enumerate(pack.get(section) or []):
+                if not isinstance(item, dict):
+                    continue
+                key = key_fn(item)
+                if not all(str(part or "").strip() for part in key):
+                    continue
+                if key in seen:
+                    errors.append(f"[{section}][{index}] Duplicate key {key!r}; first seen at [{section}][{seen[key]}].")
+                else:
+                    seen[key] = index
+
+        world_id = str(pack.get("world_id") or "default")
+        check("agents", lambda item: (str(item.get("agent_id") or item.get("id") or "").strip(),))
+        check("lorebook_entries", lambda item: (str(item.get("world_id") or world_id), str(item.get("entry_key") or "").strip()))
+        check("entity_states", lambda item: (str(item.get("agent_id") or "").strip(), str(item.get("entity_id") or "").strip(), str(item.get("state_kind") or "").strip()))
+        check("goals", lambda item: (str(item.get("agent_id") or "").strip(), str(item.get("goal_key") or "").strip()))
+        check("procedural_skills", lambda item: (str(item.get("agent_id") or "").strip(), str(item.get("skill_key") or "").strip()))
+        check(
+            "knowledge_relations",
+            lambda item: (
+                str(item.get("agent_id") or "").strip(),
+                str(item.get("world_id") or world_id).strip(),
+                str(item.get("source_type") or "").strip(),
+                str(item.get("source_id") or "").strip(),
+                str(item.get("relation_type") or "").strip(),
+                str(item.get("target_type") or "").strip(),
+                str(item.get("target_id") or "").strip(),
+            ),
+        )
+        return errors
+
+    def _validate_payload_shapes(self, pack: dict[str, Any]) -> list[str]:
+        errors: list[str] = []
+        world_id = str(pack.get("world_id") or "default")
+        defaults = dict(pack.get("defaults") or {})
+        lorebook_defaults = dict(defaults.get("lorebook") or {})
+
+        def require_object(section: str, index: int, item: Any) -> bool:
+            if not isinstance(item, dict):
+                errors.append(f"[{section}][{index}] Entry must be an object/dict.")
+                return False
+            return True
+
+        for index, item in enumerate(pack.get("agents") or []):
+            if require_object("agents", index, item):
+                if not str(item.get("agent_id") or item.get("id") or "").strip():
+                    errors.append(f"[agents][{index}] Missing required field: agent_id or id.")
+
+        for index, item in enumerate(pack.get("lorebook_entries") or []):
+            if require_object("lorebook_entries", index, item):
+                payload = _merge_defaults(item, lorebook_defaults)
+                payload.setdefault("world_id", world_id)
+                try:
+                    LorebookEntryUpsert(**payload)
+                except ValidationError as exc:
+                    errors.append(f"[lorebook_entries][{index}] {_validation_error_text(exc)}")
+
+        for index, item in enumerate(pack.get("agent_lorebook_knowledge") or []):
+            if require_object("agent_lorebook_knowledge", index, item):
+                payload = dict(item)
+                payload.setdefault("world_id", world_id)
+                try:
+                    AgentLorebookKnowledgeUpsert(**payload)
+                except ValidationError as exc:
+                    errors.append(f"[agent_lorebook_knowledge][{index}] {_validation_error_text(exc)}")
+
+        for section, schema in [
+            ("entity_states", EntityStateUpsert),
+            ("goals", AgentGoalUpsert),
+            ("procedural_skills", AgentProceduralSkillUpsert),
+            ("knowledge_relations", KnowledgeRelationUpsert),
+        ]:
+            for index, item in enumerate(pack.get(section) or []):
+                if not require_object(section, index, item):
+                    continue
+                payload = dict(item)
+                if section == "knowledge_relations":
+                    payload.setdefault("world_id", world_id)
+                try:
+                    schema(**payload)
+                except ValidationError as exc:
+                    errors.append(f"[{section}][{index}] {_validation_error_text(exc)}")
+
+        return errors
+
+    def _pack_node_index(self, pack: dict[str, Any]) -> set[tuple[str, str, str, str]]:
+        """Return nodes available inside the pack as (agent_id, world_id, type, id)."""
+
+        world_id = str(pack.get("world_id") or "default")
+        nodes: set[tuple[str, str, str, str]] = set()
+        for item in pack.get("agents") or []:
+            if isinstance(item, dict):
+                agent_id = str(item.get("agent_id") or item.get("id") or "").strip()
+                if agent_id:
+                    nodes.add(("*", world_id, "agent", agent_id))
+        for item in pack.get("lorebook_entries") or []:
+            if isinstance(item, dict):
+                item_world = str(item.get("world_id") or world_id)
+                key = str(item.get("entry_key") or "").strip()
+                if key:
+                    nodes.add(("*", item_world, "lorebook", key))
+        for item in pack.get("entity_states") or []:
+            if isinstance(item, dict):
+                agent_id = str(item.get("agent_id") or "").strip()
+                entity_id = str(item.get("entity_id") or "").strip()
+                if agent_id and entity_id:
+                    nodes.add((agent_id, world_id, "entity_state", entity_id))
+        for item in pack.get("goals") or []:
+            if isinstance(item, dict):
+                agent_id = str(item.get("agent_id") or "").strip()
+                goal_key = str(item.get("goal_key") or "").strip()
+                if agent_id and goal_key:
+                    nodes.add((agent_id, world_id, "goal", goal_key))
+        for item in pack.get("procedural_skills") or []:
+            if isinstance(item, dict):
+                agent_id = str(item.get("agent_id") or "").strip()
+                skill_key = str(item.get("skill_key") or "").strip()
+                if agent_id and skill_key:
+                    nodes.add((agent_id, world_id, "procedural_skill", skill_key))
+                    nodes.add((agent_id, world_id, "skill", skill_key))
+        return nodes
+
+    def _node_exists_in_pack_or_db(
+        self,
+        *,
+        pack_nodes: set[tuple[str, str, str, str]],
+        agent_id: str,
+        world_id: str,
+        node_type: str,
+        node_id: str,
+    ) -> bool:
+        safe_type = str(node_type or "").strip()
+        safe_id = str(node_id or "").strip()
+        if not safe_type or not safe_id:
+            return False
+        if safe_type not in _STRICTLY_RESOLVABLE_NODE_TYPES:
+            return True
+        if (agent_id, world_id, safe_type, safe_id) in pack_nodes or ("*", world_id, safe_type, safe_id) in pack_nodes:
+            return True
+        if safe_type == "skill" and (agent_id, world_id, "procedural_skill", safe_id) in pack_nodes:
+            return True
+        if safe_type == "procedural_skill" and (agent_id, world_id, "skill", safe_id) in pack_nodes:
+            return True
+        resolution = KnowledgeRelationService(self.db).resolve_node(
+            agent_id=agent_id,
+            world_id=world_id,
+            node_type=safe_type,
+            node_id=safe_id,
+        )
+        return bool(resolution.found)
+
+    def _validate_relation_nodes_preflight(self, pack: dict[str, Any]) -> list[str]:
+        errors: list[str] = []
+        world_id = str(pack.get("world_id") or "default")
+        pack_nodes = self._pack_node_index(pack)
+        for index, item in enumerate(pack.get("knowledge_relations") or []):
+            if not isinstance(item, dict):
+                continue
+            agent_id = str(item.get("agent_id") or "").strip()
+            item_world_id = str(item.get("world_id") or world_id).strip()
+            source_type = str(item.get("source_type") or "").strip()
+            source_id = str(item.get("source_id") or "").strip()
+            target_type = str(item.get("target_type") or "").strip()
+            target_id = str(item.get("target_id") or "").strip()
+            if source_type in _STRICTLY_RESOLVABLE_NODE_TYPES and not self._node_exists_in_pack_or_db(
+                pack_nodes=pack_nodes,
+                agent_id=agent_id,
+                world_id=item_world_id,
+                node_type=source_type,
+                node_id=source_id,
+            ):
+                errors.append(f"[knowledge_relations][{index}] source {source_type}:{source_id} not found in pack or database.")
+            if target_type in _STRICTLY_RESOLVABLE_NODE_TYPES and not self._node_exists_in_pack_or_db(
+                pack_nodes=pack_nodes,
+                agent_id=agent_id,
+                world_id=item_world_id,
+                node_type=target_type,
+                node_id=target_id,
+            ):
+                errors.append(f"[knowledge_relations][{index}] target {target_type}:{target_id} not found in pack or database.")
+        return errors
 
     def _item_key(self, section: str, item: Any) -> str:
         if not isinstance(item, dict):
@@ -454,5 +784,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Preview actions without writing to the database.")
     parser.add_argument("--world-id", default=None, help="Override world_id for direct .txt/.md imports.")
     parser.add_argument("--validate-relations", action="store_true", help="Require known relation source/target nodes to exist.")
+    parser.add_argument("--no-atomic", action="store_true", help="Allow partial imports instead of rolling the whole pack back on errors.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON report.")
     return parser

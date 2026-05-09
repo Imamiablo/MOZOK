@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from pathlib import Path
 
 from mozok.db.session import SessionLocal
 from mozok.scenario_import.service import BrainPackImportService, build_arg_parser, load_brain_pack_file
@@ -32,6 +28,7 @@ def main() -> int:
                 dry_run=args.dry_run,
                 base_dir=path.parent,
                 validate_relations=args.validate_relations,
+                atomic=not args.no_atomic,
             )
     except Exception as exc:  # noqa: BLE001
         print(f"Brain pack import failed: {exc}", file=sys.stderr)
@@ -43,6 +40,7 @@ def main() -> int:
         mode = "DRY RUN" if report.dry_run else "IMPORT"
         print(f"=== Mozok Brain Pack {mode} ===")
         print(f"world_id: {report.world_id}")
+        print(f"atomic: {report.atomic}")
         print("counts:")
         for key, value in report.counts.items():
             print(f"  {key}: {value}")

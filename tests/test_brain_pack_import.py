@@ -164,3 +164,86 @@ def test_brain_pack_import_api_endpoint_supports_inline_pack(client):
     assert body["dry_run"] is True
     assert body["counts"]["goals"] == 1
     assert body["counts"]["procedural_skills"] == 1
+
+
+def test_brain_pack_preflight_reports_duplicate_keys(db_session):
+    pack = sample_pack()
+    pack["lorebook_entries"].append(dict(pack["lorebook_entries"][0]))
+
+    report = BrainPackImportService(db_session).import_pack(pack, dry_run=True)
+
+    assert report.errors
+    assert any("Duplicate key" in error and "lorebook_entries" in error for error in report.errors)
+
+
+def test_brain_pack_preflight_validate_relations_accepts_nodes_declared_in_same_pack(db_session):
+    report = BrainPackImportService(db_session).import_pack(sample_pack(), dry_run=True, validate_relations=True)
+
+    assert not report.errors
+
+
+def test_brain_pack_preflight_validate_relations_rejects_missing_known_nodes(db_session):
+    pack = sample_pack()
+    pack["knowledge_relations"] = [
+        {
+            "agent_id": "npc_alice_import",
+            "source_type": "goal",
+            "source_id": "missing_goal",
+            "relation_type": "depends_on",
+            "target_type": "lorebook",
+            "target_id": "missing_lore",
+        }
+    ]
+
+    report = BrainPackImportService(db_session).import_pack(pack, dry_run=True, validate_relations=True)
+
+    assert report.errors
+    assert any("source goal:missing_goal not found" in error for error in report.errors)
+    assert any("target lorebook:missing_lore not found" in error for error in report.errors)
+
+
+def test_brain_pack_real_import_aborts_before_writes_when_preflight_fails(db_session):
+    pack = sample_pack()
+    pack["lorebook_entries"].append(dict(pack["lorebook_entries"][0]))
+
+    report = BrainPackImportService(db_session).import_pack(pack, dry_run=False, atomic=True)
+
+    assert report.errors
+    assert any(action.section == "preflight" and action.action == "aborted" for action in report.actions)
+    assert db_session.query(LorebookEntryRecord).count() == 0
+    assert db_session.query(AgentGoalRecord).count() == 0
+
+
+def test_brain_pack_atomic_import_rolls_back_section_errors(db_session):
+    pack = sample_pack()
+    pack["knowledge_relations"] = [
+        {
+            "agent_id": "npc_alice_import",
+            "source_type": "goal",
+            "source_id": "missing_goal",
+            "relation_type": "depends_on",
+            "target_type": "lorebook",
+            "target_id": "old_well",
+        }
+    ]
+
+    # validate_relations=False lets preflight pass; the section import then fails
+    # after earlier sections have been flushed. Atomic mode should roll them back.
+    report = BrainPackImportService(db_session).import_pack(pack, dry_run=False, atomic=True, validate_relations=True)
+
+    # Because validate_relations=True is a preflight error here, this also proves
+    # no partial writes happened before import started.
+    assert report.errors
+    assert db_session.query(LorebookEntryRecord).count() == 0
+    assert db_session.query(AgentGoalRecord).count() == 0
+
+
+def test_brain_pack_import_api_accepts_atomic_flag(client):
+    response = client.post(
+        "/brain-packs/import",
+        json={"pack": sample_pack(), "dry_run": True, "validate_relations": True, "atomic": True},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["atomic"] is True
+    assert body["errors"] == []

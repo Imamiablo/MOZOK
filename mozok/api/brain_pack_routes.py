@@ -16,4 +16,5 @@ def import_brain_pack(request: BrainPackImportRequest, db: Session = Depends(get
         request.pack,
         dry_run=request.dry_run,
         validate_relations=request.validate_relations,
+        atomic=request.atomic,
     )

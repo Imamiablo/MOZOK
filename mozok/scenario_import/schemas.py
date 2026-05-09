@@ -14,6 +14,7 @@ class BrainPackImportAction(BaseModel):
 
 class BrainPackImportReport(BaseModel):
     dry_run: bool = True
+    atomic: bool = True
     world_id: str = "default"
     counts: dict[str, int] = Field(default_factory=dict)
     actions: list[BrainPackImportAction] = Field(default_factory=list)
@@ -36,3 +37,4 @@ class BrainPackImportRequest(BaseModel):
     pack: dict[str, Any]
     dry_run: bool = True
     validate_relations: bool = False
+    atomic: bool = True
