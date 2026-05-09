@@ -109,18 +109,10 @@ checkpoints/
 uvicorn*.log
 
 # ========================================
-# Docker / installers / local extras
+# Local personal project files
 # ========================================
 
-Extras/*.exe
-Extras/*.msi
-Extras/*.zip
-Extras/*.7z
-Extras/*.rar
-
-# Keep documentation in Extras if needed
-!Extras/readme.txt
-!Extras/README.md
+Extras/
 
 # ========================================
 # Test / temp files

@@ -1,0 +1,16 @@
+# WORLD LORE
+# This file contains encyclopaedic knowledge about the world.
+# It is automatically added to the narrator's prompt.
+
+## ANIMALS
+
+### Bobozavrik
+Lives in the mountains, feeds on beans and humans. Looks like a pink brachiosaurus, but with a dull smile. Very friendly to those who give it beans.
+
+### Werewolf
+A nocturnal animal similar to a wolf, but with human eyes. Can transform into a human during a full moon. Afraid of silver and fire.
+
+## PLANTS
+
+### Dragon Leaf
+Poisonous leaves from dark forests. Causes muscle paralysis upon contact. Used by alchemists for potions.
