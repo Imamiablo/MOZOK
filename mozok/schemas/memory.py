@@ -121,6 +121,71 @@ class MemoryPolicyUpdate(BaseModel):
     memory_policy: dict = Field(default_factory=dict)
 
 
+MaintenanceSuggestionAction = Literal[
+    "archive",
+    "decay",
+    "summarize",
+    "summarize_then_archive",
+    "protect",
+    "review",
+    "soft_delete",
+    "hard_delete",
+]
+
+MaintenanceSuggestionSource = Literal[
+    "rules",
+    "relation_protection",
+    "embedding_cluster",
+    "text_cluster",
+]
+
+
+class MemoryMaintenanceSuggestionsRequest(BaseModel):
+    """Read-only maintenance suggestion request.
+
+    This is a preview endpoint: it must not mutate SQL records, FAISS, access
+    counters, summaries, metadata, or relations.
+    """
+
+    trigger: str = "manual"
+    limit: int = Field(default=200, ge=1, le=5000)
+    world_id: str = "default"
+    include_relation_protection: bool = True
+    include_embedding_clusters: bool = True
+    include_llm_reasons: bool = False
+    min_cluster_size: int = Field(default=3, ge=2, le=50)
+    max_clusters: int = Field(default=10, ge=1, le=100)
+    similarity_threshold: float = Field(default=0.82, ge=0.1, le=1.0)
+
+
+class MemoryMaintenanceSuggestion(BaseModel):
+    suggestion_id: str
+    action: MaintenanceSuggestionAction
+    target_memory_ids: list[int]
+    reason: str
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    source: MaintenanceSuggestionSource
+    safe_to_auto_apply: bool = False
+    relation_protected: bool = False
+    blocked_by_relation_ids: list[int] = Field(default_factory=list)
+    would_modify: bool = False
+    metadata: dict = Field(default_factory=dict)
+
+
+class MemoryMaintenanceSuggestionsResponse(BaseModel):
+    agent_id: str
+    trigger: str
+    dry_run: bool = True
+    scanned: int
+    suggestions: list[MemoryMaintenanceSuggestion]
+    summary: dict[str, int] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+
+# --- PATCH_25_1_MAINTENANCE_APPLY_REJECT_SCHEMAS START ---
+# Schemas for Patch 25 - Maintenance Apply/Reject Selected/All.
+# These live in memory.py because the existing memory API imports all memory
+# request/response models from this module.
+
 MaintenanceSelection = Literal["selected", "all"]
 MaintenanceApplyRejectMode = Literal["apply", "reject"]
 
@@ -138,14 +203,20 @@ class MemoryMaintenanceSuggestionInput(BaseModel):
 class MemoryMaintenanceApplyRejectRequest(BaseModel):
     selection: MaintenanceSelection = Field(
         default="selected",
-        description="Use 'all' to process every suggestion in the request, or 'selected' to process selected_suggestion_ids only.",
+        description=(
+            "Use 'all' to process every suggestion in the request, or "
+            "'selected' to process selected_suggestion_ids only."
+        ),
     )
     selected_suggestion_ids: list[str] = Field(default_factory=list)
     suggestions: list[MemoryMaintenanceSuggestionInput] = Field(default_factory=list)
     rebuild_index: bool = True
     override_relation_protection: bool = Field(
         default=False,
-        description="If true, destructive actions can be applied even when a target memory is linked by active knowledge relations.",
+        description=(
+            "If true, destructive actions can be applied even when a target "
+            "memory is linked by active knowledge relations."
+        ),
     )
 
 
@@ -174,3 +245,5 @@ class MemoryMaintenanceApplyRejectResponse(BaseModel):
     indexed_memories: int | None = None
     results: list[MemoryMaintenanceApplyRejectResult] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+# --- PATCH_25_1_MAINTENANCE_APPLY_REJECT_SCHEMAS END ---
+

@@ -5,7 +5,7 @@ from mozok.agent.service import AgentService
 from mozok.context.context_builder import ContextBuilder
 from mozok.core.bot_core import BotCore, get_memory_service
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
-from mozok.memory.maintenance_apply import MemoryMaintenanceApplyService
+from mozok.memory.maintenance_suggestions import MemoryMaintenanceSuggestionService
 from mozok.db.session import get_db
 from mozok.schemas.chat import ChatRequest, ChatResponse
 from mozok.schemas.context import ContextDebugRequest
@@ -21,8 +21,8 @@ from mozok.schemas.memory import (
     MemoryForgetResponse,
     MemoryMaintenanceRequest,
     MemoryMaintenanceResponse,
-    MemoryMaintenanceApplyRejectRequest,
-    MemoryMaintenanceApplyRejectResponse,
+    MemoryMaintenanceSuggestionsRequest,
+    MemoryMaintenanceSuggestionsResponse,
     MemoryPolicyUpdate,
     MemoryRead,
     MemorySearchRequest,
@@ -117,30 +117,25 @@ def run_agent_memory_maintenance(
     )
 
 
-@app.post("/agents/{agent_id}/memory-maintenance/apply", response_model=MemoryMaintenanceApplyRejectResponse)
-def apply_agent_memory_maintenance_suggestions(
+@app.post("/agents/{agent_id}/memory-maintenance/suggestions", response_model=MemoryMaintenanceSuggestionsResponse)
+def preview_agent_memory_maintenance_suggestions(
     agent_id: str,
-    data: MemoryMaintenanceApplyRejectRequest,
+    data: MemoryMaintenanceSuggestionsRequest | None = None,
     db: Session = Depends(get_db),
 ):
-    memory_service = get_memory_service(db)
-    return MemoryMaintenanceApplyService(db=db, memory_service=memory_service).apply_suggestions(
-        agent_id=agent_id,
-        request=data,
-    )
+    """Preview maintenance suggestions without changing SQL or FAISS.
 
+    The endpoint is intentionally read-only. It can use deterministic rules,
+    relation-aware protection, optional embedding clustering, and optional LLM
+    explanation text, but it does not apply the suggestions.
+    """
 
-@app.post("/agents/{agent_id}/memory-maintenance/reject", response_model=MemoryMaintenanceApplyRejectResponse)
-def reject_agent_memory_maintenance_suggestions(
-    agent_id: str,
-    data: MemoryMaintenanceApplyRejectRequest,
-    db: Session = Depends(get_db),
-):
+    request = data or MemoryMaintenanceSuggestionsRequest()
     memory_service = get_memory_service(db)
-    return MemoryMaintenanceApplyService(db=db, memory_service=memory_service).reject_suggestions(
-        agent_id=agent_id,
-        request=data,
-    )
+    return MemoryMaintenanceSuggestionService(
+        db=db,
+        embedding_service=memory_service.embedding_service,
+    ).preview(agent_id=agent_id, request=request)
 
 
 @app.post("/agents/{agent_id}/sessions/end", response_model=MemoryMaintenanceResponse)
