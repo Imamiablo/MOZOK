@@ -231,3 +231,12 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
 
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- MOZOK_BRAIN_PACK_IMPORT_BY_NAME_ROUTER START ---
+# Local brain-pack import by safe name from data/brain_packs/.
+# Keep /brain-packs/import for raw JSON-object imports.
+from mozok.api.brain_pack_import_by_name_route import router as _mozok_brain_pack_import_by_name_router
+
+app.include_router(_mozok_brain_pack_import_by_name_router)
+# --- MOZOK_BRAIN_PACK_IMPORT_BY_NAME_ROUTER END ---
+
