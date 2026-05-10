@@ -5,6 +5,7 @@ from mozok.agent.service import AgentService
 from mozok.context.context_builder import ContextBuilder
 from mozok.core.bot_core import BotCore, get_memory_service
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
+from mozok.memory.maintenance_apply import MemoryMaintenanceApplyService
 from mozok.memory.maintenance_suggestions import MemoryMaintenanceSuggestionService
 from mozok.db.session import get_db
 from mozok.schemas.chat import ChatRequest, ChatResponse
@@ -21,6 +22,8 @@ from mozok.schemas.memory import (
     MemoryForgetResponse,
     MemoryMaintenanceRequest,
     MemoryMaintenanceResponse,
+    MemoryMaintenanceApplyRejectRequest,
+    MemoryMaintenanceApplyRejectResponse,
     MemoryMaintenanceSuggestionsRequest,
     MemoryMaintenanceSuggestionsResponse,
     MemoryPolicyUpdate,
@@ -136,6 +139,45 @@ def preview_agent_memory_maintenance_suggestions(
         db=db,
         embedding_service=memory_service.embedding_service,
     ).preview(agent_id=agent_id, request=request)
+
+
+@app.post("/agents/{agent_id}/memory-maintenance/apply", response_model=MemoryMaintenanceApplyRejectResponse)
+def apply_agent_memory_maintenance_suggestions(
+    agent_id: str,
+    data: MemoryMaintenanceApplyRejectRequest,
+    db: Session = Depends(get_db),
+):
+    """Apply selected or all maintenance suggestions.
+
+    This endpoint is suggestion-driven: clients should usually call the
+    read-only suggestions endpoint first, review the suggestions, and pass the
+    accepted suggestions here. Relation-aware protection is enforced by default.
+    """
+
+    memory_service = get_memory_service(db)
+    return MemoryMaintenanceApplyService(db=db, memory_service=memory_service).apply_suggestions(
+        agent_id=agent_id,
+        request=data,
+    )
+
+
+@app.post("/agents/{agent_id}/memory-maintenance/reject", response_model=MemoryMaintenanceApplyRejectResponse)
+def reject_agent_memory_maintenance_suggestions(
+    agent_id: str,
+    data: MemoryMaintenanceApplyRejectRequest,
+    db: Session = Depends(get_db),
+):
+    """Reject selected or all maintenance suggestions without applying them.
+
+    Rejection records a small note in the target memory metadata so future
+    maintenance UI can show that the user declined the suggestion.
+    """
+
+    memory_service = get_memory_service(db)
+    return MemoryMaintenanceApplyService(db=db, memory_service=memory_service).reject_suggestions(
+        agent_id=agent_id,
+        request=data,
+    )
 
 
 @app.post("/agents/{agent_id}/sessions/end", response_model=MemoryMaintenanceResponse)

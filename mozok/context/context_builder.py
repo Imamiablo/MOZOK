@@ -207,6 +207,7 @@ class ContextPackage:
                 "knowledge_relation_ids": self._knowledge_relation_ids(self.retrieved_knowledge_relation_items),
                 "lorebook_entry_ids": self._lorebook_entry_ids(self.retrieved_lorebook_items),
                 "entity_state_ids": self._entity_state_ids(self.retrieved_entity_state_items),
+                "memory_reranking": self.memory_reranking_report(stage="retrieved"),
             },
             {
                 "step": "deduped",
@@ -258,6 +259,7 @@ class ContextPackage:
                 "used_entity_state_ids": self.used_entity_state_ids(),
                 "estimated_prompt_tokens": final_estimated_tokens,
                 "prompt_characters": len(final_prompt),
+                "memory_reranking": self.memory_reranking_report(stage="final"),
                 "notes": self._final_prompt_notes(final_counts, over_budget_after_trimming),
             },
         ]
@@ -387,6 +389,7 @@ class ContextPackage:
             "dedup_removed_memory_ids": self.dedup_removed_memory_ids(),
             "dedup_removed_details": [item.to_dict() for item in self.dedup_removed_memories],
             "context_budget": self.context_budget.to_dict() if self.context_budget else None,
+            "memory_reranking": self.memory_reranking_report(stage="final"),
             "pipeline_steps": self.pipeline_steps(),
             "sections": {
                 "agent_profile": {
@@ -417,6 +420,42 @@ class ContextPackage:
             "prompt_preview": full_prompt[:safe_preview_chars] if safe_preview_chars else "",
             "full_prompt": full_prompt if include_full_prompt else None,
         }
+
+    # --- PATCH26_1_CONTEXT_RERANKING_DEBUG_HOTFIX METHOD START ---
+    def memory_reranking_report(self, stage: str = "final") -> list[dict]:
+        """Return transparent memory reranking explanations for debug views.
+
+        The reranker stores its explanation in each MemorySearchResult metadata
+        under ``_reranking``. This method collects those explanations without
+        modifying SQL, FAISS, context lists, or memory access counters.
+        """
+
+        from mozok.memory.reranker import explanation_from_memory_metadata
+
+        if stage == "retrieved":
+            memories = (
+                list(self.retrieved_semantic_memories)
+                + list(self.retrieved_episodic_memories)
+                + list(self.retrieved_raw_memories)
+            )
+        else:
+            memories = list(self.semantic_memories) + list(self.episodic_memories) + list(self.raw_memories)
+
+        report: list[dict] = []
+        seen: set[int] = set()
+        for memory in memories:
+            memory_id = getattr(memory, "id", None)
+            if memory_id is None:
+                continue
+            memory_id_int = int(memory_id)
+            if memory_id_int in seen:
+                continue
+            explanation = explanation_from_memory_metadata(memory)
+            if explanation:
+                report.append(explanation)
+                seen.add(memory_id_int)
+        return report
+    # --- PATCH26_1_CONTEXT_RERANKING_DEBUG_HOTFIX METHOD END ---
 
     def _goal_to_debug_dict(self, item: AgentGoalRead) -> dict:
         return {
