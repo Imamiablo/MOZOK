@@ -5,6 +5,7 @@ from mozok.agent.service import AgentService
 from mozok.context.context_builder import ContextBuilder
 from mozok.core.bot_core import BotCore, get_memory_service
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
+from mozok.memory.maintenance_apply import MemoryMaintenanceApplyService
 from mozok.db.session import get_db
 from mozok.schemas.chat import ChatRequest, ChatResponse
 from mozok.schemas.context import ContextDebugRequest
@@ -20,6 +21,8 @@ from mozok.schemas.memory import (
     MemoryForgetResponse,
     MemoryMaintenanceRequest,
     MemoryMaintenanceResponse,
+    MemoryMaintenanceApplyRejectRequest,
+    MemoryMaintenanceApplyRejectResponse,
     MemoryPolicyUpdate,
     MemoryRead,
     MemorySearchRequest,
@@ -111,6 +114,32 @@ def run_agent_memory_maintenance(
         agent_id=agent_id,
         trigger=request.trigger,
         rebuild_index=request.rebuild_index,
+    )
+
+
+@app.post("/agents/{agent_id}/memory-maintenance/apply", response_model=MemoryMaintenanceApplyRejectResponse)
+def apply_agent_memory_maintenance_suggestions(
+    agent_id: str,
+    data: MemoryMaintenanceApplyRejectRequest,
+    db: Session = Depends(get_db),
+):
+    memory_service = get_memory_service(db)
+    return MemoryMaintenanceApplyService(db=db, memory_service=memory_service).apply_suggestions(
+        agent_id=agent_id,
+        request=data,
+    )
+
+
+@app.post("/agents/{agent_id}/memory-maintenance/reject", response_model=MemoryMaintenanceApplyRejectResponse)
+def reject_agent_memory_maintenance_suggestions(
+    agent_id: str,
+    data: MemoryMaintenanceApplyRejectRequest,
+    db: Session = Depends(get_db),
+):
+    memory_service = get_memory_service(db)
+    return MemoryMaintenanceApplyService(db=db, memory_service=memory_service).reject_suggestions(
+        agent_id=agent_id,
+        request=data,
     )
 
 

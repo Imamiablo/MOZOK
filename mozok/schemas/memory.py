@@ -119,3 +119,58 @@ class MemoryPolicyUpdate(BaseModel):
     #   }
     # }
     memory_policy: dict = Field(default_factory=dict)
+
+
+MaintenanceSelection = Literal["selected", "all"]
+MaintenanceApplyRejectMode = Literal["apply", "reject"]
+
+
+class MemoryMaintenanceSuggestionInput(BaseModel):
+    suggestion_id: str = Field(..., examples=["archive:memory:42"])
+    action: ForgetAction = "archive"
+    target_memory_ids: list[int] = Field(default_factory=list)
+    reason: str = "maintenance suggestion"
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    decay_amount: int = Field(default=1, ge=1, le=9)
+    metadata: dict = Field(default_factory=dict)
+
+
+class MemoryMaintenanceApplyRejectRequest(BaseModel):
+    selection: MaintenanceSelection = Field(
+        default="selected",
+        description="Use 'all' to process every suggestion in the request, or 'selected' to process selected_suggestion_ids only.",
+    )
+    selected_suggestion_ids: list[str] = Field(default_factory=list)
+    suggestions: list[MemoryMaintenanceSuggestionInput] = Field(default_factory=list)
+    rebuild_index: bool = True
+    override_relation_protection: bool = Field(
+        default=False,
+        description="If true, destructive actions can be applied even when a target memory is linked by active knowledge relations.",
+    )
+
+
+class MemoryMaintenanceApplyRejectResult(BaseModel):
+    suggestion_id: str
+    action: str
+    target_memory_ids: list[int] = Field(default_factory=list)
+    status: str
+    changed: bool
+    message: str
+    relation_ids: list[int] = Field(default_factory=list)
+    created_summary_ids: list[int] = Field(default_factory=list)
+
+
+class MemoryMaintenanceApplyRejectResponse(BaseModel):
+    agent_id: str
+    mode: MaintenanceApplyRejectMode
+    selection: MaintenanceSelection
+    requested_suggestions: int
+    selected_suggestions: int
+    applied: int
+    rejected: int
+    skipped: int
+    relation_protected: int
+    rebuilt_index: bool
+    indexed_memories: int | None = None
+    results: list[MemoryMaintenanceApplyRejectResult] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
