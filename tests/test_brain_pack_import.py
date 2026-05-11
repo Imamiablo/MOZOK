@@ -247,3 +247,24 @@ def test_brain_pack_import_api_accepts_atomic_flag(client):
     body = response.json()
     assert body["atomic"] is True
     assert body["errors"] == []
+
+
+def test_brain_pack_dry_run_includes_memory_import_preview(db_session):
+    pack = sample_pack()
+    pack["memories"] = [
+        {
+            "agent_id": "npc_alice_import",
+            "content": "Alice knows that the old well connects to tunnels.",
+            "memory_type": "semantic",
+            "importance": 0.8,
+        }
+    ]
+
+    report = BrainPackImportService(db_session).import_pack(pack, dry_run=True)
+
+    assert report.memory_import is not None
+    assert report.memory_import["dry_run"] is True
+    assert report.memory_import["seen"] == 1
+    assert report.memory_import["created"] == 0
+    assert report.memory_import["preview"][0]["content"] == "Alice knows that the old well connects to tunnels."
+    assert any(action.section == "memories" and action.action == "would_import" for action in report.actions)

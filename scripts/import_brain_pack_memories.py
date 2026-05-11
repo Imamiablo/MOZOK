@@ -1,4 +1,4 @@
-"""Import only the `memories` section from a MOZOK brain pack.
+r"""Import only the `memories` section from a MOZOK brain pack.
 
 Usage from project root:
 
@@ -26,7 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from mozok.db.session import SessionLocal
-from mozok.memory.service import MemoryService
+from mozok.core.bot_core import get_memory_service
 from mozok.scenario_import.memory_importer import BrainPackMemoryImporter
 
 
@@ -58,7 +58,7 @@ def main() -> int:
 
     db = SessionLocal()
     try:
-        importer = BrainPackMemoryImporter(db=db, memory_service=MemoryService(db))
+        importer = BrainPackMemoryImporter(db=db, memory_service=get_memory_service(db))
         result = importer.import_pack_memories(
             pack,
             default_agent_id=args.agent_id,

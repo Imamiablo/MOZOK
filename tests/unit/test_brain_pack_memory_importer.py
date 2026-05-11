@@ -102,3 +102,54 @@ def test_import_creates_memories_through_memory_service():
     assert service.calls[0]["memory_type"] == "semantic"
     assert service.calls[0]["metadata"]["source"] == "brain_pack_import"
     assert service.calls[0]["metadata"]["lorebook_key"] == "old_well"
+
+
+def test_import_creates_memorycreate_for_current_memory_service_signature():
+    class CurrentStyleMemoryService:
+        def __init__(self):
+            self.calls = []
+
+        def add_memory(self, data):
+            self.calls.append(data)
+            return FakeMemoryRecord(id=99)
+
+    service = CurrentStyleMemoryService()
+    importer = BrainPackMemoryImporter(db=None, memory_service=service)
+
+    result = importer.import_pack_memories(
+        {
+            "defaults": {"agent_id": "npc_alice"},
+            "memories": [{"content": "Alice knows the old well.", "importance": 0.9}],
+        }
+    )
+
+    assert result.errors == []
+    assert result.created == 1
+    assert result.created_ids == [99]
+    assert service.calls[0].agent_id == "npc_alice"
+    assert service.calls[0].content == "Alice knows the old well."
+    assert service.calls[0].importance == 9
+
+
+def test_import_normalises_direct_ten_point_importance_for_memorycreate():
+    class CurrentStyleMemoryService:
+        def __init__(self):
+            self.calls = []
+
+        def add_memory(self, data):
+            self.calls.append(data)
+            return FakeMemoryRecord(id=100)
+
+    service = CurrentStyleMemoryService()
+    importer = BrainPackMemoryImporter(db=None, memory_service=service)
+
+    result = importer.import_pack_memories(
+        {
+            "defaults": {"agent_id": "npc_alice"},
+            "memories": [{"content": "Alice trusts Bob.", "importance": 8}],
+        }
+    )
+
+    assert result.errors == []
+    assert result.created == 1
+    assert service.calls[0].importance == 8

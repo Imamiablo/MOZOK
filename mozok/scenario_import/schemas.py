@@ -20,6 +20,7 @@ class BrainPackImportReport(BaseModel):
     actions: list[BrainPackImportAction] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    memory_import: dict[str, Any] | None = None
 
     @property
     def ok(self) -> bool:

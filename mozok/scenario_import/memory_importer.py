@@ -83,6 +83,20 @@ def _safe_float(value: Any, default: float) -> float:
         return default
 
 
+def normalise_importance(value: Any, default: float = 0.5) -> int:
+    """Convert brain-pack importance into Mozok's 1-10 memory scale.
+
+    Brain packs have used both 0.0-1.0 scores and direct 1-10 scores during
+    prototyping. MemoryCreate expects an integer from 1 to 10, so normalise here
+    before calling the real MemoryService.
+    """
+
+    raw = _safe_float(value, default)
+    if raw <= 1.0:
+        raw *= 10.0
+    return max(1, min(10, int(round(raw))))
+
+
 def iter_memory_items(
     pack: Mapping[str, Any],
     *,
@@ -259,21 +273,34 @@ class BrainPackMemoryImporter:
             "agent_id": item.agent_id,
             "content": item.content,
             "memory_type": item.memory_type,
-            "importance": item.importance,
+            "importance": normalise_importance(item.importance),
             "emotional_weight": item.emotional_weight,
             "metadata": item.metadata,
             "session_id": item.session_id,
         }
 
-        # Prefer common service method names used by MOZOK patches.
+        # Prefer common service method names used by MOZOK patches. The current
+        # MemoryService.add_memory expects a MemoryCreate object, while older fake
+        # or prototype services accepted keyword arguments directly. Support both.
         for method_name in ("add_memory", "create_memory", "store_memory", "remember"):
             method = getattr(self.memory_service, method_name, None)
             if method is None:
                 continue
+
+            if method_name == "add_memory":
+                try:
+                    from mozok.schemas.memory import MemoryCreate
+
+                    return method(MemoryCreate(**kwargs))
+                except TypeError:
+                    # Older tests/prototypes used add_memory(**kwargs). Fall
+                    # through to the compatibility paths below.
+                    pass
+
             try:
                 return method(**kwargs)
             except TypeError:
-                # Some older service methods may not accept session_id.
+                # Some older service methods may not accept session_id or None values.
                 kwargs_without_none = {k: v for k, v in kwargs.items() if v is not None}
                 try:
                     return method(**kwargs_without_none)

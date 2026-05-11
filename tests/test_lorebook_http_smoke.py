@@ -1,4 +1,4 @@
-"""
+r"""
 HTTP smoke tests for Mozok Lorebook endpoints.
 
 These tests talk to a REAL running Mozok API server.

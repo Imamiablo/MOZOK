@@ -21,6 +21,7 @@ from mozok.schemas.entity_state import EntityStateUpsert
 from mozok.schemas.goals import AgentGoalUpsert
 from mozok.schemas.knowledge_relations import KnowledgeRelationUpsert
 from mozok.schemas.procedural_skills import AgentProceduralSkillUpsert
+from mozok.scenario_import.memory_importer import BrainPackMemoryImporter
 from mozok.scenario_import.schemas import BrainPackImportAction, BrainPackImportReport
 
 
@@ -320,18 +321,13 @@ class BrainPackImportService:
         report.warnings.extend(self.preflight_warnings(normalized))
         report.errors.extend(self.preflight_errors(normalized, validate_relations=validate_relations))
 
-        if normalized.get("memories"):
-            report.warnings.append(
-                "memories are counted but not imported by Brain Pack v1 because memory import needs embedding/index services. "
-                "Use /memories or a later import pipeline for indexed memories."
-            )
-
         if dry_run:
             for section in _COUNT_SECTIONS:
                 for item in normalized.get(section) or []:
                     report.actions.append(
                         BrainPackImportAction(section=section, action="would_upsert", key=self._item_key(section, item))
                     )
+            self._import_memories(normalized, report, dry_run=True)
             return report
 
         if report.errors:
@@ -346,10 +342,90 @@ class BrainPackImportService:
             return report
 
         if atomic:
-            return self._import_pack_atomic(normalized, report, validate_relations=validate_relations)
+            report = self._import_pack_atomic(normalized, report, validate_relations=validate_relations)
+        else:
+            self._import_pack_sections(normalized, report, validate_relations=validate_relations)
 
-        self._import_pack_sections(normalized, report, validate_relations=validate_relations)
+        if not report.errors:
+            self._import_memories(normalized, report, dry_run=False)
+        elif normalized.get("memories"):
+            report.warnings.append("Skipped memory import because scenario import reported errors.")
+
         return report
+
+    def _import_memories(self, pack: dict[str, Any], report: BrainPackImportReport, *, dry_run: bool) -> None:
+        """Import the optional `memories` section through MemoryService.
+
+        This is intentionally separate from the structural scenario sections.
+        MemoryService owns SQL memory creation, embeddings, FAISS indexing,
+        duplicate checks, and maintenance side effects.
+        """
+
+        if not pack.get("memories"):
+            return
+
+        memory_service = None
+        if not dry_run:
+            try:
+                from mozok.core.bot_core import get_memory_service
+
+                memory_service = get_memory_service(self.db)
+            except Exception as exc:  # noqa: BLE001 - report cleanly instead of crashing the whole API.
+                report.errors.append(f"memory import setup failed: {exc}")
+                report.memory_import = {
+                    "dry_run": dry_run,
+                    "seen": 0,
+                    "created": 0,
+                    "skipped_duplicates": 0,
+                    "skipped_invalid": 0,
+                    "created_ids": [],
+                    "errors": [str(exc)],
+                    "preview": [],
+                }
+                return
+
+        importer = BrainPackMemoryImporter(db=self.db, memory_service=memory_service)
+        memory_result = importer.import_pack_memories(
+            pack,
+            dry_run=dry_run,
+            allow_duplicates=False,
+            source_label="scenario_import",
+        )
+        report.memory_import = memory_result.to_dict()
+
+        if memory_result.created:
+            self._record_action(
+                report,
+                "memories",
+                "imported",
+                str(memory_result.created),
+                message=f"Imported {memory_result.created} indexed memories through MemoryService.",
+            )
+        elif dry_run and memory_result.seen:
+            self._record_action(
+                report,
+                "memories",
+                "would_import",
+                str(memory_result.seen),
+                message=f"Would import {memory_result.seen} memories through MemoryService.",
+            )
+
+        if memory_result.skipped_duplicates:
+            self._record_action(
+                report,
+                "memories",
+                "skipped_duplicates",
+                str(memory_result.skipped_duplicates),
+            )
+        if memory_result.skipped_invalid:
+            self._record_action(
+                report,
+                "memories",
+                "skipped_invalid",
+                str(memory_result.skipped_invalid),
+            )
+        for error in memory_result.errors:
+            report.errors.append(f"memory import: {error}")
 
     def _import_pack_sections(
         self,
@@ -437,7 +513,7 @@ class BrainPackImportService:
     def preflight_warnings(self, pack: dict[str, Any]) -> list[str]:
         warnings: list[str] = []
         if pack.get("memories"):
-            warnings.append("memories are present but will not be imported by this importer yet.")
+            warnings.append("memories will be imported through MemoryService, including embeddings and FAISS indexing.")
         if not pack.get("world_id"):
             warnings.append("world_id is missing; importer will use 'default'.")
         return warnings

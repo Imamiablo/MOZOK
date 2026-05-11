@@ -43,9 +43,9 @@ def _get_db(service: Any) -> Any:
 
 
 def _default_memory_service_factory(db: Any) -> Any:
-    from mozok.memory.service import MemoryService
+    from mozok.core.bot_core import get_memory_service
 
-    return MemoryService(db)
+    return get_memory_service(db)
 
 
 def _bind_arguments(method: Callable[..., Any], self_obj: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
