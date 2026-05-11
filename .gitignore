@@ -37,6 +37,9 @@ logs/
 /data/*.sqlite
 /data/*.db
 
+# Local test files
+Extras/
+
 # Heavy/local installers and model artefacts
 *.exe
 *.msi
@@ -46,6 +49,3 @@ logs/
 *.safetensors
 *.ckpt
 *.bin
-
-# Test files,etc
-Extras/
