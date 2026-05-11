@@ -1,6 +1,6 @@
 # MOZOK ROADMAP
 
-## Current status after version 28
+## Current status after version 32
 
 MOZOK is a reusable bot-brain backend built around:
 
@@ -22,6 +22,10 @@ MOZOK is a reusable bot-brain backend built around:
 - procedural skills
 - brain pack / scenario import
 - scenario evaluation suite
+- Context Budget Policy V2
+- Dedup V2 audit
+- Knowledge Relations V3 graph intelligence
+- Procedural Skills V3 learning and shared skill libraries
 
 ## Implemented MVP features
 
@@ -55,7 +59,7 @@ MOZOK is a reusable bot-brain backend built around:
 - lorebook integration
 - entity state integration
 - knowledge relation integration
-- one-hop relation expansion
+- one-hop and optional multi-hop relation expansion
 - safe context dedup
 - token budget trimming
 - debug pipeline steps
@@ -145,6 +149,38 @@ MOZOK is a reusable bot-brain backend built around:
 - Budget-aware one-hop knowledge-relation expansion cap.
 - Backwards-compatible legacy total-budget trimming when no explicit section budgets are supplied.
 
+### Dedup V2
+
+- Language-aware prompt-time memory dedup tokenisation for English, Ukrainian, Russian, and simple CJK text.
+- Read-only `POST /agents/{agent_id}/memory-dedup/audit` endpoint.
+- Audit combines normalised text similarity, token overlap, and optional embedding similarity.
+- Reports `duplicate_of`, `similar_to`, `supersedes`, and `contradicts` candidates.
+- Returns suggested KnowledgeRelation-style payloads without creating graph edges automatically.
+- No automatic deletion, archiving, merging, FAISS mutation, or SQL mutation.
+- OpenAPI and unit coverage for audit schemas, relation suggestions, contradiction detection, superseding detection, and embedding-similar candidates.
+
+### Knowledge Relations V3
+
+- Read-only `POST /agents/{agent_id}/knowledge-relations/graph/debug` endpoint.
+- Multi-hop traversal from explicit root nodes.
+- Cycle detection with reported paths instead of infinite graph following.
+- Budget-aware traversal by max depth, max relations, per-node limit, and optional approximate token budget.
+- ContextBuilder support for `knowledge_relation_traversal_depth` and `knowledge_relation_traversal_token_budget`.
+- Relation-aware reranking now includes a small second-hop graph signal.
+- Reviewed relation creation endpoint: `POST /agents/{agent_id}/knowledge-relations/auto-create`.
+- Maintenance/summarisation now creates conservative provenance edges: `summarised_by` and `derived_from`.
+
+### Procedural Skills V3
+
+- Skill usage/result tracking through `POST /procedural-skills/{skill_id}/usage-results`.
+- Per-skill effectiveness stats: usage count, success/failure/neutral counts, success rate, average score, and last-used timestamp.
+- Learned strategy notes stored as evidence; optional explicit `apply_learned_note` copies a safe note into visible skill notes.
+- Built-in skill templates exposed through `GET /procedural-skills/templates`.
+- Template-to-agent creation through `POST /agents/{agent_id}/procedural-skills/from-template`.
+- Shared library skills under `__shared__`, opt-in through `include_shared` / `include_shared_procedural_skills`.
+- Skill relation suggestions and reviewed graph sync for goal/lore/entity links.
+- ContextBuilder, `/chat`, and `/debug/context` support opt-in shared procedural skills without changing existing default isolation.
+
 ## Immediate cleanup status
 
 - `.gitignore` restored/updated.
@@ -152,7 +188,7 @@ MOZOK is a reusable bot-brain backend built around:
 - Stray patch history under `mozok/docs/patch_history` was consolidated into `docs/patch_history`.
 - `ROADMAP.md` added as the current plan document.
 - `requirements.txt` and `requirements-dev.txt` restored/updated.
-- Full pytest run passes in the review environment: 129 passed, 3 skipped.
+- Full pytest run passes in the review environment: 145 passed, 3 skipped.
 
 ## Known non-blocking warnings / checks
 
@@ -162,38 +198,7 @@ MOZOK is a reusable bot-brain backend built around:
 
 ## Next development priorities
 
-### 1. Dedup V2
-
-Improve dedup beyond text similarity:
-
-- embedding similarity
-- language-aware tokenisation
-- duplicate/similar/supersedes/contradicts relations
-- audit endpoint
-- never hard-delete automatically
-
-### 2. Knowledge Relations V3
-
-Add graph intelligence:
-
-- multi-hop traversal
-- cycle detection
-- relation-aware reranking
-- budget-aware traversal
-- auto-created relations from maintenance/summariser
-- graph debug endpoint
-
-### 3. Procedural Skills V3
-
-Make skills learnable/updatable:
-
-- success/failure tracking
-- learned strategies from experience
-- shared skill libraries
-- skill templates
-- skill relation graph integration
-
-### 4. Maintenance V3
+### 1. Maintenance V3
 
 - FAISS direct mutation
 - LLM decision-maker for maintenance
@@ -202,7 +207,7 @@ Make skills learnable/updatable:
 - UI controls for apply/reject all
 - advanced semantic duplicate merging
 
-### 5. Reranking V2
+### 2. Reranking V2
 
 - LLM reranker
 - cross-encoder reranker

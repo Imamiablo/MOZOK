@@ -178,3 +178,48 @@ def test_reject_selected_records_rejection_without_applying_action():
         assert record.metadata_json["maintenance_rejections"][0]["suggestion_id"] == "decay:memory:candidate"
     finally:
         db.close()
+
+from mozok.memory.summarizer import MemorySummarizer
+
+
+def test_summarise_apply_auto_creates_summary_graph_relations():
+    db = make_db_session()
+    try:
+        memory_service = make_memory_service(db)
+        memory_service.summarizer = MemorySummarizer(llm_client=None)
+        first = create_memory(memory_service, content="Alice heard water under the chapel.")
+        second = create_memory(memory_service, content="Alice saw a map behind the seventh stone.")
+
+        response = MemoryMaintenanceApplyService(db, memory_service).apply_suggestions(
+            agent_id="npc_alice",
+            request=MemoryMaintenanceApplyRejectRequest(
+                selection="all",
+                suggestions=[
+                    MemoryMaintenanceSuggestionInput(
+                        suggestion_id="summarise:old_well_cluster",
+                        action="summarize",
+                        target_memory_ids=[first.id, second.id],
+                        reason="Cluster should be summarised.",
+                    )
+                ],
+                rebuild_index=False,
+            ),
+        )
+
+        assert response.applied == 1
+        summary_ids = response.results[0].created_summary_ids
+        assert len(summary_ids) == 1
+        summary_id = str(summary_ids[0])
+
+        relations = db.query(KnowledgeRelationRecord).filter(
+            KnowledgeRelationRecord.agent_id == "npc_alice",
+            KnowledgeRelationRecord.active == True,  # noqa: E712
+        ).all()
+        relation_types = {(item.source_id, item.relation_type, item.target_id) for item in relations}
+        assert (str(first.id), "summarised_by", summary_id) in relation_types
+        assert (str(second.id), "summarised_by", summary_id) in relation_types
+        assert (summary_id, "derived_from", str(first.id)) in relation_types
+        assert (summary_id, "derived_from", str(second.id)) in relation_types
+        assert all(item.metadata_json.get("created_by") == "memory_summarizer" for item in relations)
+    finally:
+        db.close()

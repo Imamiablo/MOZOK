@@ -10,7 +10,11 @@ from mozok.knowledge_relations.service import (
     reads_from_records,
 )
 from mozok.schemas.knowledge_relations import (
+    KnowledgeRelationAutoCreateRequest,
+    KnowledgeRelationAutoCreateResponse,
     KnowledgeRelationContextResponse,
+    KnowledgeRelationGraphDebugRequest,
+    KnowledgeRelationGraphDebugResponse,
     KnowledgeRelationNeighborhoodResponse,
     KnowledgeRelationPatch,
     KnowledgeRelationRead,
@@ -151,3 +155,35 @@ def get_agent_knowledge_relation_neighborhood(
         lines=[format_knowledge_relation_for_prompt_line(relation) for relation in relations],
         relations=relations,
     )
+
+
+@router.post("/agents/{agent_id}/knowledge-relations/graph/debug", response_model=KnowledgeRelationGraphDebugResponse)
+def debug_agent_knowledge_relation_graph(
+    agent_id: str,
+    data: KnowledgeRelationGraphDebugRequest,
+    db: Session = Depends(get_db),
+):
+    """Read-only multi-hop knowledge graph traversal/debug endpoint.
+
+    It reports traversed nodes/edges, detected cycles, budget skips, and
+    relation-aware reranking hints. It never mutates SQL or FAISS.
+    """
+
+    if not data.roots:
+        raise HTTPException(status_code=400, detail="At least one root node is required.")
+    return KnowledgeRelationService(db).traverse_graph(agent_id=agent_id, request=data)
+
+
+@router.post("/agents/{agent_id}/knowledge-relations/auto-create", response_model=KnowledgeRelationAutoCreateResponse)
+def create_reviewed_knowledge_relations(
+    agent_id: str,
+    data: KnowledgeRelationAutoCreateRequest,
+    db: Session = Depends(get_db),
+):
+    """Create reviewed relation suggestions from maintenance/summariser tooling.
+
+    Keep this explicit: callers can preview with dry_run=true, then create only
+    reviewed relation suggestions.
+    """
+
+    return KnowledgeRelationService(db).create_reviewed_relations(agent_id=agent_id, request=data)

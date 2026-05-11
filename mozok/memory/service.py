@@ -335,33 +335,113 @@ class MemoryService:
             # table available yet. Reranking must degrade gracefully.
             return signals
 
+        neighbour_nodes_by_memory: dict[int, set[tuple[str, str]]] = {int(memory_id): set() for memory_id in memory_ids}
+        direct_relation_ids: set[int] = set()
+
         for relation in relations:
             try:
                 if relation.source_type == "memory":
                     memory_id = int(relation.source_id)
                     other_type = str(relation.target_type or "")
+                    other_id = str(relation.target_id or "")
                 else:
                     memory_id = int(relation.target_id)
                     other_type = str(relation.source_type or "")
+                    other_id = str(relation.source_id or "")
             except (TypeError, ValueError):
                 continue
 
-            signal = signals.setdefault(memory_id, MemoryRelationSignal())
-            signal.relation_count += 1
-            signal.max_strength = max(signal.max_strength, float(relation.strength or 0.0))
-            signal.max_confidence = max(signal.max_confidence, float(relation.confidence or 0.0))
-            if relation.relation_type:
-                signal.relation_types.append(str(relation.relation_type))
+            direct_relation_ids.add(int(relation.id))
+            if other_type and other_id:
+                neighbour_nodes_by_memory.setdefault(memory_id, set()).add((other_type, other_id))
+            self._apply_relation_signal(
+                signals.setdefault(memory_id, MemoryRelationSignal()),
+                relation=relation,
+                other_type=other_type,
+                weight=1.0,
+            )
 
-            normalised_other_type = other_type.lower()
-            if normalised_other_type in {"goal", "agent_goal", "plan_step"}:
-                signal.active_goal_count += 1
-            elif normalised_other_type in {"lorebook", "lorebook_entry", "lore"}:
-                signal.lorebook_count += 1
-            elif normalised_other_type in {"entity_state", "entity", "faction", "quest", "location", "object"}:
-                signal.entity_state_count += 1
+        # Knowledge Relations V3: add a small second-hop signal so memories linked
+        # through a goal/lore/entity subgraph can be reranked slightly higher. This
+        # remains a reranking hint only; it does not pull extra memories into SQL
+        # results and it never mutates the graph.
+        self._apply_second_hop_relation_signals(
+            agent_id=agent_id,
+            signals=signals,
+            neighbour_nodes_by_memory=neighbour_nodes_by_memory,
+            exclude_relation_ids=direct_relation_ids,
+        )
 
         return signals
+
+    def _apply_relation_signal(
+        self,
+        signal: MemoryRelationSignal,
+        *,
+        relation: KnowledgeRelationRecord,
+        other_type: str,
+        weight: float = 1.0,
+    ) -> None:
+        signal.relation_count += 1
+        signal.max_strength = max(signal.max_strength, float(relation.strength or 0.0) * weight)
+        signal.max_confidence = max(signal.max_confidence, float(relation.confidence or 0.0) * weight)
+        if relation.relation_type:
+            suffix = "" if weight >= 1.0 else "@2hop"
+            signal.relation_types.append(str(relation.relation_type) + suffix)
+
+        normalised_other_type = other_type.lower()
+        if normalised_other_type in {"goal", "agent_goal", "plan_step"}:
+            signal.active_goal_count += 1
+        elif normalised_other_type in {"lorebook", "lorebook_entry", "lore"}:
+            signal.lorebook_count += 1
+        elif normalised_other_type in {"entity_state", "entity", "faction", "quest", "location", "object"}:
+            signal.entity_state_count += 1
+
+    def _apply_second_hop_relation_signals(
+        self,
+        *,
+        agent_id: str,
+        signals: dict[int, MemoryRelationSignal],
+        neighbour_nodes_by_memory: dict[int, set[tuple[str, str]]],
+        exclude_relation_ids: set[int],
+    ) -> None:
+        predicates = []
+        owner_by_node: dict[tuple[str, str], set[int]] = {}
+        for memory_id, nodes in neighbour_nodes_by_memory.items():
+            for node_type, node_id in list(nodes)[:20]:
+                key = (str(node_type), str(node_id))
+                owner_by_node.setdefault(key, set()).add(memory_id)
+                predicates.append(and_(KnowledgeRelationRecord.source_type == key[0], KnowledgeRelationRecord.source_id == key[1]))
+                predicates.append(and_(KnowledgeRelationRecord.target_type == key[0], KnowledgeRelationRecord.target_id == key[1]))
+
+        if not predicates:
+            return
+
+        try:
+            query = self.db.query(KnowledgeRelationRecord).filter(
+                KnowledgeRelationRecord.agent_id == agent_id,
+                KnowledgeRelationRecord.active == True,  # noqa: E712
+                or_(*predicates),
+            )
+            if exclude_relation_ids:
+                query = query.filter(~KnowledgeRelationRecord.id.in_(exclude_relation_ids))
+            second_hop_relations = query.limit(200).all()
+        except Exception:
+            return
+
+        for relation in second_hop_relations:
+            source = (str(relation.source_type or ""), str(relation.source_id or ""))
+            target = (str(relation.target_type or ""), str(relation.target_id or ""))
+            owners = set(owner_by_node.get(source, set())) | set(owner_by_node.get(target, set()))
+            for memory_id in owners:
+                # Count the non-neighbour endpoint as the contextual type where possible.
+                other_type = relation.target_type if source in owner_by_node else relation.source_type
+                self._apply_relation_signal(
+                    signals.setdefault(memory_id, MemoryRelationSignal()),
+                    relation=relation,
+                    other_type=str(other_type or ""),
+                    weight=0.5,
+                )
 
     # ---------------------------------------------------------------------
     # Forget actions
@@ -851,7 +931,7 @@ class MemoryService:
         if summary.error:
             metadata["summary_error"] = summary.error
 
-        return self._create_memory_record(
+        summary_record = self._create_memory_record(
             agent_id=agent_id,
             content=content,
             memory_type=MEMORY_LEVEL_SEMANTIC,
@@ -860,6 +940,98 @@ class MemoryService:
             metadata=metadata,
             index=True,
         )
+        self._create_summary_knowledge_relations(
+            agent_id=agent_id,
+            source_records=source_records,
+            summary_record=summary_record,
+            trigger=trigger,
+        )
+        return summary_record
+
+    def _create_summary_knowledge_relations(
+        self,
+        agent_id: str,
+        source_records: list[MemoryRecord],
+        summary_record: MemoryRecord,
+        trigger: str,
+    ) -> None:
+        """Create conservative graph edges linking summaries to source memories.
+
+        This is the automatic relation creation promised by Knowledge Relations
+        V3. It is intentionally narrow and explainable: when Mozok creates a
+        summary memory during maintenance/summarisation, each source memory gets
+        a ``summarised_by`` edge to the summary, and the summary gets a
+        ``derived_from`` edge back to each source. No other graph inferences are
+        made here.
+        """
+
+        if summary_record is None or not source_records:
+            return
+
+        now = self._utc_now()
+        for source in source_records:
+            if source is None or source.id == summary_record.id:
+                continue
+            edges = [
+                {
+                    "source_type": "memory",
+                    "source_id": str(source.id),
+                    "relation_type": "summarised_by",
+                    "target_type": "memory",
+                    "target_id": str(summary_record.id),
+                    "description": "Source memory was consolidated into this semantic summary.",
+                },
+                {
+                    "source_type": "memory",
+                    "source_id": str(summary_record.id),
+                    "relation_type": "derived_from",
+                    "target_type": "memory",
+                    "target_id": str(source.id),
+                    "description": "Semantic summary was derived from this source memory.",
+                },
+            ]
+            for edge in edges:
+                record = (
+                    self.db.query(KnowledgeRelationRecord)
+                    .filter(
+                        KnowledgeRelationRecord.agent_id == agent_id,
+                        KnowledgeRelationRecord.world_id == "default",
+                        KnowledgeRelationRecord.source_type == edge["source_type"],
+                        KnowledgeRelationRecord.source_id == edge["source_id"],
+                        KnowledgeRelationRecord.relation_type == edge["relation_type"],
+                        KnowledgeRelationRecord.target_type == edge["target_type"],
+                        KnowledgeRelationRecord.target_id == edge["target_id"],
+                    )
+                    .one_or_none()
+                )
+                if record is None:
+                    record = KnowledgeRelationRecord(
+                        agent_id=agent_id,
+                        world_id="default",
+                        source_type=edge["source_type"],
+                        source_id=edge["source_id"],
+                        relation_type=edge["relation_type"],
+                        target_type=edge["target_type"],
+                        target_id=edge["target_id"],
+                        created_at=now,
+                    )
+                    self.db.add(record)
+                record.strength = 1.0
+                record.confidence = 1.0
+                record.description = edge["description"]
+                record.evidence_json = {
+                    "trigger": trigger,
+                    "summary_memory_id": summary_record.id,
+                    "source_memory_id": source.id,
+                }
+                record.metadata_json = {
+                    "auto_created": True,
+                    "created_by": "memory_summarizer",
+                    "created_at": now.isoformat(),
+                }
+                record.active = True
+                record.updated_at = now
+        self.db.commit()
 
     def _age_days(self, record: MemoryRecord, now: datetime | None = None) -> float:
         now = now or self._utc_now()

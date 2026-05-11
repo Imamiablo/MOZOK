@@ -7,6 +7,7 @@ from mozok.core.bot_core import BotCore, get_memory_service
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
 from mozok.memory.maintenance_apply import MemoryMaintenanceApplyService
 from mozok.memory.maintenance_suggestions import MemoryMaintenanceSuggestionService
+from mozok.memory.dedup_audit import MemoryDedupAuditService
 from mozok.db.session import get_db
 from mozok.schemas.chat import ChatRequest, ChatResponse
 from mozok.schemas.context import ContextDebugRequest
@@ -30,6 +31,8 @@ from mozok.schemas.memory import (
     MemoryRead,
     MemorySearchRequest,
     MemorySearchResult,
+    MemoryDedupAuditRequest,
+    MemoryDedupAuditResponse,
 )
 
 app = FastAPI(title="Mozok", version="0.2.0")
@@ -93,6 +96,26 @@ def forget_memory(memory_id: int, data: MemoryForgetRequest, db: Session = Depen
 def rebuild_index(db: Session = Depends(get_db)):
     count = get_memory_service(db).rebuild_index()
     return {"rebuilt": True, "indexed_memories": count}
+
+
+@app.post("/agents/{agent_id}/memory-dedup/audit", response_model=MemoryDedupAuditResponse)
+def audit_agent_memory_dedup(
+    agent_id: str,
+    data: MemoryDedupAuditRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    """Preview Dedup V2 candidates without modifying memories or graph edges.
+
+    This endpoint is intentionally read-only. It reports possible duplicate,
+    similar, superseding, or contradicting memories and can include suggested
+    knowledge-relation payloads for later human-reviewed workflows.
+    """
+
+    memory_service = get_memory_service(db)
+    return MemoryDedupAuditService(
+        db=db,
+        embedding_service=memory_service.embedding_service,
+    ).audit(agent_id=agent_id, request=data or MemoryDedupAuditRequest())
 
 
 @app.get("/agents/{agent_id}/memory-policy")
@@ -237,6 +260,7 @@ def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
         select_relevant_procedural_skills=data.select_relevant_procedural_skills,
         procedural_skill_min_score=data.procedural_skill_min_score,
         procedural_skill_fallback_to_priority=data.procedural_skill_fallback_to_priority,
+        include_shared_procedural_skills=data.include_shared_procedural_skills,
         include_knowledge_relations=data.include_knowledge_relations,
         knowledge_relation_limit=data.knowledge_relation_limit,
         knowledge_relation_world_id=data.knowledge_relation_world_id,
@@ -247,6 +271,8 @@ def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
         knowledge_relation_type=data.knowledge_relation_type,
         include_related_knowledge_relations=data.include_related_knowledge_relations,
         related_knowledge_relation_limit=data.related_knowledge_relation_limit,
+        knowledge_relation_traversal_depth=data.knowledge_relation_traversal_depth,
+        knowledge_relation_traversal_token_budget=data.knowledge_relation_traversal_token_budget,
         world_id=data.world_id,
         lorebook_limit=data.lorebook_limit,
         include_public_lore=data.include_public_lore,
@@ -289,6 +315,7 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             select_relevant_procedural_skills=data.select_relevant_procedural_skills,
             procedural_skill_min_score=data.procedural_skill_min_score,
             procedural_skill_fallback_to_priority=data.procedural_skill_fallback_to_priority,
+            include_shared_procedural_skills=data.include_shared_procedural_skills,
             include_knowledge_relations=data.include_knowledge_relations,
             knowledge_relation_limit=data.knowledge_relation_limit,
             knowledge_relation_world_id=data.knowledge_relation_world_id,
@@ -299,6 +326,8 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             knowledge_relation_type=data.knowledge_relation_type,
             include_related_knowledge_relations=data.include_related_knowledge_relations,
             related_knowledge_relation_limit=data.related_knowledge_relation_limit,
+            knowledge_relation_traversal_depth=data.knowledge_relation_traversal_depth,
+            knowledge_relation_traversal_token_budget=data.knowledge_relation_traversal_token_budget,
             world_id=data.world_id,
             lorebook_limit=data.lorebook_limit,
             include_public_lore=data.include_public_lore,

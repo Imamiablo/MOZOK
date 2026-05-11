@@ -247,3 +247,81 @@ class MemoryMaintenanceApplyRejectResponse(BaseModel):
     notes: list[str] = Field(default_factory=list)
 # --- PATCH_25_1_MAINTENANCE_APPLY_REJECT_SCHEMAS END ---
 
+
+# --- PATCH_31_DEDUP_V2_SCHEMAS START ---
+DedupAuditRelationType = Literal["duplicate_of", "similar_to", "supersedes", "contradicts"]
+
+
+class MemoryDedupAuditRequest(BaseModel):
+    """Read-only Dedup V2 audit request.
+
+    The audit may calculate text overlap and embedding similarity, but it must
+    not delete, archive, merge, or mutate memories. It only reports candidates
+    that a human/UI or future explicit workflow can review.
+    """
+
+    world_id: str = Field(default="default", examples=["default", "from_like_world"])
+    limit: int = Field(default=200, ge=2, le=1000)
+    max_pairs: int = Field(default=100, ge=1, le=5000)
+    memory_types: list[MemoryLevel] | None = Field(
+        default=None,
+        description="Optional memory levels to scan. Null scans raw, episodic, semantic, and core.",
+    )
+    include_inactive: bool = False
+    include_embedding_similarity: bool = True
+    include_relation_suggestions: bool = True
+    min_text_similarity: float = Field(default=0.84, ge=0.0, le=1.0)
+    min_token_overlap: float = Field(default=0.72, ge=0.0, le=1.0)
+    min_embedding_similarity: float = Field(default=0.88, ge=-1.0, le=1.0)
+    min_confidence: float = Field(default=0.55, ge=0.0, le=1.0)
+
+
+class MemoryDedupAuditMemoryPreview(BaseModel):
+    id: int
+    memory_type: str
+    importance: int
+    content_preview: str
+
+
+class MemoryDedupRelationSuggestion(BaseModel):
+    agent_id: str
+    world_id: str
+    source_type: str = "memory"
+    source_id: str
+    relation_type: DedupAuditRelationType
+    target_type: str = "memory"
+    target_id: str
+    strength: float = Field(default=1.0, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    description: str = ""
+    evidence: dict = Field(default_factory=dict)
+    metadata: dict = Field(default_factory=dict)
+    validate_nodes: bool = False
+
+
+class MemoryDedupAuditCandidate(BaseModel):
+    primary_memory: MemoryDedupAuditMemoryPreview
+    secondary_memory: MemoryDedupAuditMemoryPreview
+    suggested_relation_type: DedupAuditRelationType
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    text_similarity: float = Field(default=0.0, ge=0.0, le=1.0)
+    token_overlap: float = Field(default=0.0, ge=0.0, le=1.0)
+    embedding_similarity: float | None = None
+    reasons: list[str] = Field(default_factory=list)
+    safe_action: str = "review_only"
+    would_modify: bool = False
+    would_delete: bool = False
+    relation_suggestion: MemoryDedupRelationSuggestion | None = None
+
+
+class MemoryDedupAuditResponse(BaseModel):
+    agent_id: str
+    world_id: str
+    dry_run: bool = True
+    scanned_memories: int
+    compared_pairs: int
+    candidates_count: int
+    candidates: list[MemoryDedupAuditCandidate] = Field(default_factory=list)
+    summary: dict[str, int] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+# --- PATCH_31_DEDUP_V2_SCHEMAS END ---

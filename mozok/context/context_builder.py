@@ -18,7 +18,7 @@ from mozok.procedural_skills.service import ProceduralSkillService, format_proce
 from mozok.lorebook.schemas import LorebookContextItem
 from mozok.lorebook.service import LorebookService, format_lorebook_context
 from mozok.schemas.entity_state import EntityStateRead
-from mozok.schemas.knowledge_relations import KnowledgeRelationRead
+from mozok.schemas.knowledge_relations import KnowledgeGraphRootNode, KnowledgeRelationGraphDebugRequest, KnowledgeRelationRead
 from mozok.schemas.procedural_skills import AgentProceduralSkillRead
 from mozok.schemas.memory import MemorySearchResult
 
@@ -840,6 +840,7 @@ class ContextBuilder:
         select_relevant_procedural_skills: bool = False,
         procedural_skill_min_score: float = 1.0,
         procedural_skill_fallback_to_priority: bool = True,
+        include_shared_procedural_skills: bool = False,
         include_knowledge_relations: bool = False,
         knowledge_relation_limit: int = 10,
         knowledge_relation_world_id: str | None = None,
@@ -850,6 +851,8 @@ class ContextBuilder:
         knowledge_relation_type: str | None = None,
         include_related_knowledge_relations: bool = False,
         related_knowledge_relation_limit: int = 10,
+        knowledge_relation_traversal_depth: int = 1,
+        knowledge_relation_traversal_token_budget: int | None = None,
         world_id: str = "default",
         lorebook_limit: int = 0,
         include_public_lore: bool = True,
@@ -974,6 +977,7 @@ class ContextBuilder:
                     limit=procedural_skill_limit,
                     min_score=procedural_skill_min_score,
                     fallback_to_priority=procedural_skill_fallback_to_priority,
+                    include_shared=include_shared_procedural_skills,
                 )
                 procedural_skill_items = procedural_skill_reads_from_records(selected_skill_records)
                 procedural_skill_selection = [item.model_dump() for item in selection_details]
@@ -983,6 +987,7 @@ class ContextBuilder:
                     skill_type=procedural_skill_type,
                     status=procedural_skill_status,
                     include_inactive=False,
+                    include_shared=include_shared_procedural_skills,
                     limit=procedural_skill_limit,
                 )
                 procedural_skill_items = procedural_skill_reads_from_records(procedural_skill_records)
@@ -1023,14 +1028,47 @@ class ContextBuilder:
                 entity_state_items=entity_state_items,
             )
             explicit_ids = {int(item.id) for item in explicit_knowledge_relation_items if item.id is not None}
-            related_records = KnowledgeRelationService(self.db).list_related_to_nodes(
-                agent_id=agent_id,
-                world_id=knowledge_relation_world_id if knowledge_relation_world_id is not None else world_id,
-                node_refs=node_refs,
-                exclude_ids=explicit_ids,
-                limit=effective_related_knowledge_relation_limit,
-            )
-            auto_expanded_knowledge_relation_items = knowledge_relation_reads_from_records(related_records)
+            relation_world_id = knowledge_relation_world_id if knowledge_relation_world_id is not None else world_id
+            traversal_depth = max(1, min(int(knowledge_relation_traversal_depth), 5))
+            if traversal_depth > 1:
+                section_budget = budget_policy.section_budget_for("knowledge_relations")
+                traversal_token_budget = knowledge_relation_traversal_token_budget
+                if traversal_token_budget is None and budget_policy.budget_aware_graph_expansion:
+                    traversal_token_budget = section_budget
+
+                graph_response = KnowledgeRelationService(self.db).traverse_graph(
+                    agent_id=agent_id,
+                    request=KnowledgeRelationGraphDebugRequest(
+                        world_id=relation_world_id,
+                        roots=[KnowledgeGraphRootNode(node_type=node_type, node_id=node_id) for node_type, node_id in node_refs],
+                        direction="both",
+                        max_depth=traversal_depth,
+                        max_relations=effective_related_knowledge_relation_limit,
+                        estimated_token_budget=traversal_token_budget,
+                    ),
+                )
+                auto_expanded_knowledge_relation_items = [
+                    item for item in graph_response.relations if int(item.id) not in explicit_ids
+                ]
+                graph_expansion_report.update(
+                    {
+                        "mode": "multi_hop_traversal",
+                        "traversal_depth": traversal_depth,
+                        "graph_node_count": graph_response.node_count,
+                        "cycle_count": graph_response.cycle_count,
+                        "traversal_report": graph_response.traversal_report,
+                    }
+                )
+            else:
+                related_records = KnowledgeRelationService(self.db).list_related_to_nodes(
+                    agent_id=agent_id,
+                    world_id=relation_world_id,
+                    node_refs=node_refs,
+                    exclude_ids=explicit_ids,
+                    limit=effective_related_knowledge_relation_limit,
+                )
+                auto_expanded_knowledge_relation_items = knowledge_relation_reads_from_records(related_records)
+                graph_expansion_report.update({"mode": "one_hop"})
 
         knowledge_relation_items = self._merge_knowledge_relation_items(
             explicit_knowledge_relation_items,

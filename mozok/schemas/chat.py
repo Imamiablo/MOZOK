@@ -73,6 +73,11 @@ class ChatRequest(BaseModel):
         description="If true and no skill matches relevance filters, fall back to top-priority active skills.",
     )
 
+    include_shared_procedural_skills: bool = Field(
+        default=False,
+        description="If true, include shared library procedural skills under __shared__ as fallbacks. Local skills override shared skills with the same key.",
+    )
+
     include_knowledge_relations: bool = Field(
         default=False,
         description="If true, include knowledge relation graph edges for this agent in the prompt.",
@@ -104,7 +109,25 @@ class ChatRequest(BaseModel):
         default=10,
         ge=0,
         le=50,
-        description="Maximum number of auto-expanded one-hop knowledge relations to include.",
+        description="Maximum number of auto-expanded knowledge relations to include.",
+    )
+    knowledge_relation_traversal_depth: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description=(
+            "How many graph hops to use for related knowledge-relation expansion. "
+            "1 keeps legacy one-hop behaviour; 2+ enables Knowledge Relations V3 multi-hop traversal."
+        ),
+    )
+    knowledge_relation_traversal_token_budget: int | None = Field(
+        default=None,
+        ge=1,
+        le=20000,
+        description=(
+            "Optional approximate token budget for multi-hop relation traversal. "
+            "Null uses the knowledge_relations section budget when budget-aware expansion is enabled."
+        ),
     )
 
     world_id: str = Field(
@@ -195,7 +218,7 @@ class ChatRequest(BaseModel):
     )
     budget_aware_graph_expansion: bool = Field(
         default=True,
-        description="If true, cap one-hop knowledge-relation expansion using the knowledge_relations section budget.",
+        description="If true, cap knowledge-relation graph expansion using the knowledge_relations section budget.",
     )
 
 

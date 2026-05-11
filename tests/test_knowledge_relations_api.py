@@ -260,3 +260,143 @@ def test_neighborhood_endpoint_returns_incoming_and_outgoing_edges(client: TestC
     assert outgoing.status_code == 200, outgoing.text
     assert outgoing.json()["count"] == 1
     assert outgoing.json()["relations"][0]["target_id"] == "old_well"
+
+
+def test_graph_debug_traverses_multi_hop_and_reports_cycle(client: TestClient):
+    for payload in [
+        {
+            "agent_id": "npc_alice",
+            "world_id": "graph_world",
+            "source_type": "concept",
+            "source_id": "old_well",
+            "relation_type": "leads_to",
+            "target_type": "concept",
+            "target_id": "tunnels",
+            "strength": 0.9,
+            "confidence": 0.9,
+        },
+        {
+            "agent_id": "npc_alice",
+            "world_id": "graph_world",
+            "source_type": "concept",
+            "source_id": "tunnels",
+            "relation_type": "hides",
+            "target_type": "concept",
+            "target_id": "map_room",
+            "strength": 0.8,
+            "confidence": 0.9,
+        },
+        {
+            "agent_id": "npc_alice",
+            "world_id": "graph_world",
+            "source_type": "concept",
+            "source_id": "map_room",
+            "relation_type": "loops_back_to",
+            "target_type": "concept",
+            "target_id": "old_well",
+            "strength": 0.7,
+            "confidence": 0.8,
+        },
+    ]:
+        _upsert_relation(client, payload)
+
+    response = client.post(
+        "/agents/npc_alice/knowledge-relations/graph/debug",
+        json={
+            "world_id": "graph_world",
+            "roots": [{"node_type": "concept", "node_id": "old_well"}],
+            "direction": "outgoing",
+            "max_depth": 3,
+            "max_relations": 10,
+            "per_node_limit": 10,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["relation_count"] == 3
+    assert body["cycle_count"] == 1
+    assert body["traversal_report"]["read_only"] is True
+    assert body["traversal_report"]["multi_hop"] is True
+    assert {node["node_id"] for node in body["nodes"]} >= {"old_well", "tunnels", "map_room"}
+    assert any("concept:old_well" in cycle["nodes"] for cycle in body["cycles"])
+    assert body["rerank_hints"]
+
+
+def test_graph_debug_respects_token_budget(client: TestClient):
+    _upsert_relation(
+        client,
+        {
+            "agent_id": "npc_alice",
+            "world_id": "graph_world",
+            "source_type": "concept",
+            "source_id": "old_well",
+            "relation_type": "leads_to",
+            "target_type": "concept",
+            "target_id": "very_long_tunnel_name",
+            "description": "A deliberately verbose relation line should exceed a tiny traversal budget.",
+        },
+    )
+
+    response = client.post(
+        "/agents/npc_alice/knowledge-relations/graph/debug",
+        json={
+            "world_id": "graph_world",
+            "roots": [{"node_type": "concept", "node_id": "old_well"}],
+            "direction": "outgoing",
+            "max_depth": 2,
+            "estimated_token_budget": 1,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["relation_count"] == 0
+    assert body["traversal_report"]["budget_aware"] is True
+    assert body["traversal_report"]["skipped_for_budget"] == 1
+
+
+def test_reviewed_auto_create_endpoint_can_dry_run_and_create_relations(client: TestClient):
+    dry_run = client.post(
+        "/agents/npc_alice/knowledge-relations/auto-create",
+        json={
+            "world_id": "graph_world",
+            "dry_run": True,
+            "suggestions": [
+                {
+                    "source_type": "memory",
+                    "source_id": "1",
+                    "relation_type": "similar_to",
+                    "target_type": "memory",
+                    "target_id": "2",
+                    "description": "Reviewed dedup suggestion.",
+                }
+            ],
+        },
+    )
+    assert dry_run.status_code == 200, dry_run.text
+    assert dry_run.json()["dry_run"] is True
+    assert dry_run.json()["created"] == 0
+    assert dry_run.json()["skipped"] == 1
+
+    created = client.post(
+        "/agents/npc_alice/knowledge-relations/auto-create",
+        json={
+            "world_id": "graph_world",
+            "suggestions": [
+                {
+                    "source_type": "memory",
+                    "source_id": "1",
+                    "relation_type": "similar_to",
+                    "target_type": "memory",
+                    "target_id": "2",
+                    "description": "Reviewed dedup suggestion.",
+                }
+            ],
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["created"] == 1
+    assert body["relation_ids"]
+    assert body["relations"][0]["relation_type"] == "similar_to"

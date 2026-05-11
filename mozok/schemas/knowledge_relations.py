@@ -36,6 +36,8 @@ COMMON_RELATION_TYPES = [
     "explains",
     "part_of",
     "similar_to",
+    "duplicate_of",
+    "supersedes",
     "derived_from",
     "motivates",
 ]
@@ -152,3 +154,139 @@ class KnowledgeRelationNeighborhoodResponse(BaseModel):
     count: int
     lines: list[str]
     relations: list[KnowledgeRelationRead]
+
+
+class KnowledgeGraphRootNode(BaseModel):
+    """Start node for graph traversal/debugging."""
+
+    node_type: str = Field(..., examples=["memory", "goal", "lorebook", "entity_state"])
+    node_id: str = Field(..., examples=["42", "hide_tunnel_secret", "old_well"])
+
+
+class KnowledgeRelationGraphDebugRequest(BaseModel):
+    """Read-only multi-hop graph traversal request.
+
+    This powers graph debugging and can also be reused by context assembly to
+    avoid uncontrolled relation fan-out. It never creates, updates, archives, or
+    deletes graph edges.
+    """
+
+    world_id: str | None = Field(default="default", examples=["default", "from_like_world"])
+    roots: list[KnowledgeGraphRootNode] = Field(
+        default_factory=list,
+        description="Root knowledge nodes to traverse from.",
+    )
+    direction: str = Field(default="both", examples=["both", "outgoing", "incoming"])
+    max_depth: int = Field(default=2, ge=1, le=5)
+    max_relations: int = Field(default=50, ge=1, le=300)
+    per_node_limit: int = Field(default=12, ge=1, le=100)
+    estimated_token_budget: int | None = Field(
+        default=None,
+        ge=1,
+        le=20000,
+        description="Optional approximate prompt-token budget for relation lines.",
+    )
+    relation_types: list[str] | None = Field(
+        default=None,
+        description="Optional allow-list of relation types to traverse.",
+        examples=[["depends_on", "evidence_for", "supports"]],
+    )
+    min_strength: float = Field(default=0.0, ge=0.0, le=1.0)
+    min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    include_inactive: bool = False
+    resolve_nodes: bool = Field(
+        default=False,
+        description="If true, attempt to resolve known node types into titles/summaries for debugging.",
+    )
+
+
+class KnowledgeGraphNodeRead(BaseModel):
+    node_type: str
+    node_id: str
+    depth: int
+    score: float = 0.0
+    first_seen_via_relation_id: int | None = None
+    resolved: KnowledgeNodeResolution | None = None
+
+
+class KnowledgeGraphPathRead(BaseModel):
+    depth: int
+    nodes: list[str]
+    relation_ids: list[int]
+    score: float = 0.0
+
+
+class KnowledgeGraphCycleRead(BaseModel):
+    detected_at_depth: int
+    nodes: list[str]
+    relation_ids: list[int]
+    relation_id: int
+
+
+class KnowledgeGraphRerankHint(BaseModel):
+    node_type: str
+    node_id: str
+    score: float
+    min_depth: int
+    relation_count: int
+    strongest_relation: float
+    confidence: float
+
+
+class KnowledgeRelationGraphDebugResponse(BaseModel):
+    agent_id: str
+    world_id: str | None = None
+    roots: list[KnowledgeGraphRootNode]
+    direction: str
+    max_depth: int
+    node_count: int
+    relation_count: int
+    cycle_count: int
+    nodes: list[KnowledgeGraphNodeRead]
+    relations: list[KnowledgeRelationRead]
+    relation_lines: list[str]
+    paths: list[KnowledgeGraphPathRead]
+    cycles: list[KnowledgeGraphCycleRead]
+    rerank_hints: list[KnowledgeGraphRerankHint]
+    traversal_report: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeRelationAutoCreateItem(BaseModel):
+    """A reviewed graph edge suggestion that may be created explicitly."""
+
+    source_type: str
+    source_id: str
+    relation_type: str
+    target_type: str
+    target_id: str
+    strength: float = Field(default=0.7, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    description: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeRelationAutoCreateRequest(BaseModel):
+    """Create reviewed relation suggestions in one safe batch.
+
+    This is intended for future maintenance/summariser/dedup UI flows. It is not
+    automatic unless a caller explicitly sends reviewed suggestions here.
+    """
+
+    world_id: str = Field(default="default")
+    suggestions: list[KnowledgeRelationAutoCreateItem] = Field(default_factory=list)
+    validate_nodes: bool = False
+    dry_run: bool = Field(default=False, description="If true, validate/preview only and do not write SQL.")
+
+
+class KnowledgeRelationAutoCreateResponse(BaseModel):
+    agent_id: str
+    world_id: str
+    dry_run: bool
+    requested: int
+    created: int
+    updated: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
+    relation_ids: list[int] = Field(default_factory=list)
+    relations: list[KnowledgeRelationRead] = Field(default_factory=list)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import JSON
 
@@ -65,4 +65,35 @@ class AgentProceduralSkillRecord(Base):
             unique=True,
         ),
         Index("ix_agent_procedural_skills_agent_status_priority", "agent_id", "status", "priority"),
+    )
+
+
+class AgentProceduralSkillUsageRecord(Base):
+    """Observed usage/outcome for one procedural skill.
+
+    This keeps learning evidence separate from the skill definition. Existing
+    skill rows therefore do not need schema-altering migrations: ``create_all``
+    can add this table in existing dev databases, while old skills remain valid.
+    """
+
+    __tablename__ = "agent_procedural_skill_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(String(120), nullable=False, index=True)
+    skill_id = Column(Integer, nullable=True, index=True)
+    skill_key = Column(String(160), nullable=False, index=True)
+
+    session_id = Column(String(160), nullable=False, default="", index=True)
+    context = Column(Text, nullable=False, default="")
+    outcome = Column(String(40), nullable=False, default="neutral", index=True)
+    result_score = Column(Float, nullable=False, default=0.5)
+    feedback = Column(Text, nullable=False, default="")
+    learned_note = Column(Text, nullable=False, default="")
+    metadata_json = Column(JSON_TYPE, nullable=False, default=dict)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, index=True)
+
+    __table_args__ = (
+        Index("ix_agent_procedural_skill_usage_agent_skill", "agent_id", "skill_id"),
+        Index("ix_agent_procedural_skill_usage_agent_key", "agent_id", "skill_key"),
     )
