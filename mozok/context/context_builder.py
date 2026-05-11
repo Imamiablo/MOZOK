@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from mozok.db.models import AgentRecord, MemoryRecord
 from mozok.context.dedup import ContextMemoryDeduplicator, DedupRemovedMemory
-from mozok.context.token_budget import ContextBudgeter, ContextBudgetPolicy, ContextBudgetReport, estimate_tokens
+from mozok.context.token_budget import ContextBudgeter, ContextBudgetPolicy, ContextBudgetReport, context_item_key, estimate_tokens
 from mozok.memory.policy import MEMORY_LEVEL_CORE
 from mozok.memory.service import MemoryService
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY, ShortTermMessage
@@ -98,6 +98,8 @@ class ContextPackage:
     entity_state_items: list[EntityStateRead] = field(default_factory=list)
     dedup_removed_memories: list[DedupRemovedMemory] = field(default_factory=list)
     context_budget: ContextBudgetReport | None = None
+    compressed_item_text: dict[str, str] = field(default_factory=dict)
+    budget_aware_graph_expansion: dict = field(default_factory=dict)
 
     # Debug-only snapshots used to explain the context assembly pipeline.
     # These are copies of earlier stages so later budget trimming can mutate the
@@ -271,6 +273,7 @@ class ContextPackage:
                 "explicit_knowledge_relation_ids": self.explicit_knowledge_relation_ids(),
                 "auto_expanded_knowledge_relation_ids": self.auto_expanded_knowledge_relation_ids(),
                 "auto_expanded_count": len(self.auto_expanded_knowledge_relation_items),
+                "budget_aware_graph_expansion": self.budget_aware_graph_expansion,
                 "counts_after_expansion": post_dedup_counts,
             },
             {
@@ -652,35 +655,35 @@ class ContextPackage:
         if self.goal_items:
             sections.append(
                 "Goals / plans currently active for this agent:\n"
-                + "\n".join(format_goal_for_prompt_line(item) for item in self.goal_items)
+                + "\n".join(self._format_goal_for_prompt_line(item) for item in self.goal_items)
             )
 
         if self.procedural_skill_items:
             sections.append(
                 "Procedural skills / behavior strategies available to this agent:\n"
-                + "\n".join(format_procedural_skill_for_prompt_line(item) for item in self.procedural_skill_items)
+                + "\n".join(self._format_procedural_skill_for_prompt_line(item) for item in self.procedural_skill_items)
             )
 
         if self.entity_state_items:
             sections.append(
                 "Entity state context available to this agent:\n"
-                + "\n".join(format_entity_state_for_prompt_line(item) for item in self.entity_state_items)
+                + "\n".join(self._format_entity_state_for_prompt_line(item) for item in self.entity_state_items)
             )
 
         if self.lorebook_items:
-            sections.append(format_lorebook_context(self.lorebook_items))
+            sections.append(self._format_lorebook_context_for_prompt())
 
         if self.knowledge_relation_items:
             sections.append(
                 "Knowledge relations / links available to this agent:\n"
-                + "\n".join(format_knowledge_relation_for_prompt_line(item) for item in self.knowledge_relation_items)
+                + "\n".join(self._format_knowledge_relation_for_prompt_line(item) for item in self.knowledge_relation_items)
             )
 
         if self.core_memories:
             sections.append(
                 "Core/profile memories. Treat these as stable identity or high-priority facts:\n"
                 + "\n".join(
-                    f"- {memory.content}"
+                    f"- {self._context_item_text('core', memory, memory.content)}"
                     for memory in self.core_memories
                     if memory.content
                 )
@@ -690,7 +693,7 @@ class ContextPackage:
             sections.append(
                 "Recent conversation / short-term working memory:\n"
                 + "\n".join(
-                    f"- {message.role}: {self._compact(message.content)}"
+                    self._format_short_term_message_for_prompt(message)
                     for message in self.short_term_messages
                     if message.content
                 )
@@ -702,7 +705,7 @@ class ContextPackage:
             sections.append(
                 "Relevant semantic memories. These are facts, preferences, summaries, or stable knowledge:\n"
                 + "\n".join(
-                    f"- {memory.content}"
+                    f"- {self._context_item_text('semantic', memory, memory.content)}"
                     for memory in self.semantic_memories
                     if memory.content
                 )
@@ -712,7 +715,7 @@ class ContextPackage:
             sections.append(
                 "Relevant episodic memories. These are past events or experiences:\n"
                 + "\n".join(
-                    f"- {memory.content}"
+                    f"- {self._context_item_text('episodic', memory, memory.content)}"
                     for memory in self.episodic_memories
                     if memory.content
                 )
@@ -722,7 +725,7 @@ class ContextPackage:
             sections.append(
                 "Relevant raw memories. These may be noisy and should be treated carefully:\n"
                 + "\n".join(
-                    f"- {memory.content}"
+                    f"- {self._context_item_text('raw', memory, memory.content)}"
                     for memory in self.raw_memories
                     if memory.content
                 )
@@ -751,6 +754,46 @@ class ContextPackage:
         )
 
         return "\n\n---\n\n".join(section for section in sections if section.strip())
+
+    def _context_item_text(self, source: str, item, fallback: str) -> str:
+        compressed = self.compressed_item_text.get(context_item_key(source, item))
+        if compressed is not None:
+            return compressed
+        return fallback or ""
+
+    def _format_short_term_message_for_prompt(self, message: ShortTermMessage) -> str:
+        content = self._context_item_text("short_term", message, self._compact(message.content))
+        return f"- {message.role}: {content}"
+
+    def _format_goal_for_prompt_line(self, item: AgentGoalRead) -> str:
+        fallback = format_goal_for_prompt_line(item)
+        return self._context_item_text("goal", item, fallback)
+
+    def _format_procedural_skill_for_prompt_line(self, item: AgentProceduralSkillRead) -> str:
+        fallback = format_procedural_skill_for_prompt_line(item)
+        return self._context_item_text("procedural_skill", item, fallback)
+
+    def _format_entity_state_for_prompt_line(self, item: EntityStateRead) -> str:
+        fallback = format_entity_state_for_prompt_line(item)
+        return self._context_item_text("entity_state", item, fallback)
+
+    def _format_knowledge_relation_for_prompt_line(self, item: KnowledgeRelationRead) -> str:
+        fallback = format_knowledge_relation_for_prompt_line(item)
+        return self._context_item_text("knowledge_relation", item, fallback)
+
+    def _format_lorebook_context_for_prompt(self) -> str:
+        if not self.lorebook_items:
+            return "No lorebook entries available for this agent."
+
+        lines = ["Lorebook / world knowledge available to this agent:"]
+        for item in self.lorebook_items:
+            confidence = f", confidence={item.confidence}/10" if item.confidence is not None else ""
+            content = self._context_item_text("lorebook", item, item.content)
+            lines.append(
+                f"- [{item.category}] {item.title} "
+                f"(key={item.entry_key}, state={item.knowledge_state}{confidence}): {content}"
+            )
+        return "\n".join(lines)
 
     def _compact(self, text: str, max_chars: int = 700) -> str:
         clean = (text or "").replace("\n", " ").strip()
@@ -782,6 +825,11 @@ class ContextBuilder:
         max_prompt_tokens: int = 6000,
         reserved_response_tokens: int = 1000,
         allow_core_trimming: bool = False,
+        token_estimation_model: str = "generic",
+        section_budget_tokens: dict[str, int] | None = None,
+        compression_enabled: bool = True,
+        short_term_summarization_enabled: bool = True,
+        budget_aware_graph_expansion: bool = True,
         include_goals: bool = False,
         goal_limit: int = 10,
         goal_status: str | None = None,
@@ -814,6 +862,17 @@ class ContextBuilder:
         """Collect profile + short-term + long-term memory for one LLM turn."""
 
         agent_id = agent.id
+        budget_policy = ContextBudgetPolicy(
+            enforce=enforce_token_budget,
+            max_prompt_tokens=max_prompt_tokens,
+            reserved_response_tokens=reserved_response_tokens,
+            allow_core_trimming=allow_core_trimming,
+            model_name=token_estimation_model,
+            section_budget_tokens=section_budget_tokens or {},
+            compression_enabled=compression_enabled,
+            short_term_summarization_enabled=short_term_summarization_enabled,
+            budget_aware_graph_expansion=budget_aware_graph_expansion,
+        )
 
         short_term_messages = SHORT_TERM_MEMORY.get_messages(
             agent_id=agent_id,
@@ -929,7 +988,30 @@ class ContextBuilder:
                 procedural_skill_items = procedural_skill_reads_from_records(procedural_skill_records)
 
         auto_expanded_knowledge_relation_items: list[KnowledgeRelationRead] = []
-        if include_related_knowledge_relations and related_knowledge_relation_limit > 0:
+        graph_expansion_report: dict = {
+            "enabled": bool(budget_policy.budget_aware_graph_expansion),
+            "requested_related_limit": int(related_knowledge_relation_limit),
+            "effective_related_limit": int(related_knowledge_relation_limit),
+            "reason": "not_applied",
+        }
+        effective_related_knowledge_relation_limit = int(related_knowledge_relation_limit)
+        if budget_policy.enforce and budget_policy.budget_aware_graph_expansion:
+            effective_related_knowledge_relation_limit = self._budget_aware_related_relation_limit(
+                policy=budget_policy,
+                requested_limit=related_knowledge_relation_limit,
+                explicit_relation_count=len(explicit_knowledge_relation_items),
+            )
+            graph_expansion_report = {
+                "enabled": True,
+                "requested_related_limit": int(related_knowledge_relation_limit),
+                "effective_related_limit": int(effective_related_knowledge_relation_limit),
+                "reason": "capped_by_knowledge_relation_section_budget",
+                "section_budget_tokens": budget_policy.section_budget_for("knowledge_relations"),
+                "estimated_tokens_per_relation": 28,
+                "explicit_relation_count": len(explicit_knowledge_relation_items),
+            }
+
+        if include_related_knowledge_relations and effective_related_knowledge_relation_limit > 0:
             node_refs = self._context_node_refs(
                 core_memories=core_memories,
                 semantic_memories=semantic_memories,
@@ -946,7 +1028,7 @@ class ContextBuilder:
                 world_id=knowledge_relation_world_id if knowledge_relation_world_id is not None else world_id,
                 node_refs=node_refs,
                 exclude_ids=explicit_ids,
-                limit=related_knowledge_relation_limit,
+                limit=effective_related_knowledge_relation_limit,
             )
             auto_expanded_knowledge_relation_items = knowledge_relation_reads_from_records(related_records)
 
@@ -999,6 +1081,7 @@ class ContextBuilder:
             lorebook_items=list(lorebook_items),
             entity_state_items=list(entity_state_items),
             dedup_removed_memories=list(deduped.removed),
+            budget_aware_graph_expansion=graph_expansion_report,
             retrieved_short_term_messages=list(short_term_messages),
             retrieved_core_memories=list(core_memories),
             retrieved_semantic_memories=list(semantic_memories),
@@ -1023,15 +1106,31 @@ class ContextBuilder:
             post_dedup_entity_state_items=list(entity_state_items),
         )
 
-        budget_policy = ContextBudgetPolicy(
-            enforce=enforce_token_budget,
-            max_prompt_tokens=max_prompt_tokens,
-            reserved_response_tokens=reserved_response_tokens,
-            allow_core_trimming=allow_core_trimming,
-        )
         context_package.context_budget = ContextBudgeter(budget_policy).apply(context_package)
 
         return context_package
+
+
+    def _budget_aware_related_relation_limit(
+        self,
+        policy: ContextBudgetPolicy,
+        requested_limit: int,
+        explicit_relation_count: int = 0,
+    ) -> int:
+        safe_requested = max(0, int(requested_limit))
+        if safe_requested == 0:
+            return 0
+
+        section_budget = policy.section_budget_for("knowledge_relations")
+        if section_budget is None:
+            return safe_requested
+
+        # Relation prompt lines are usually short, but graph expansion can fan out
+        # quickly. Use a conservative fixed estimate before the real prompt exists.
+        estimated_tokens_per_relation = 28
+        relation_slots = max(0, int(section_budget // estimated_tokens_per_relation))
+        auto_slots = max(0, relation_slots - max(0, int(explicit_relation_count)))
+        return min(safe_requested, auto_slots)
 
 
     def _merge_knowledge_relation_items(

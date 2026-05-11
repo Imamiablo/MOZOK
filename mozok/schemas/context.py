@@ -176,6 +176,35 @@ class ContextDebugRequest(BaseModel):
         default=False,
         description="If false, core/profile memories are protected from token-budget trimming.",
     )
+    token_estimation_model: str = Field(
+        default="generic",
+        description=(
+            "Cheap token-estimation profile to use for budget reports, e.g. generic, qwen, llama, gemma, japanese. "
+            "This is not a real tokenizer; it adjusts the character-per-token estimate."
+        ),
+        examples=["generic", "qwen3-coder:30b", "llama3.1", "japanese"],
+    )
+    section_budget_tokens: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-section soft token budgets. Keys include goals, procedural_skills, entity_states, "
+            "lorebook, knowledge_relations, core, short_term, semantic, episodic, raw. "
+            "Omitted keys use safe default shares of the available prompt budget."
+        ),
+        examples=[{"short_term": 500, "semantic": 700, "knowledge_relations": 250}],
+    )
+    compression_enabled: bool = Field(
+        default=True,
+        description="If true, compress oversized context items before dropping them from the prompt.",
+    )
+    short_term_summarization_enabled: bool = Field(
+        default=True,
+        description="If true, summarise older short-term messages into one compact note when the prompt is over budget.",
+    )
+    budget_aware_graph_expansion: bool = Field(
+        default=True,
+        description="If true, cap one-hop knowledge-relation expansion using the knowledge_relations section budget.",
+    )
 
     include_full_prompt: bool = Field(
         default=True,
