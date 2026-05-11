@@ -22,6 +22,49 @@ from mozok.schemas.knowledge_relations import KnowledgeRelationRead
 from mozok.schemas.procedural_skills import AgentProceduralSkillRead
 from mozok.schemas.memory import MemorySearchResult
 
+def _memory_reranking_final_score(memory: MemorySearchResult) -> float | None:
+    """Return the transient reranking final score attached to a memory result.
+
+    Reranking metadata is request-local debug/runtime metadata. It is not written
+    back to SQL or FAISS. Missing or malformed scores are treated as absent so
+    older memory results keep their existing order.
+    """
+
+    metadata = getattr(memory, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+
+    reranking = metadata.get("_reranking")
+    if not isinstance(reranking, dict):
+        return None
+
+    try:
+        return float(reranking.get("final_score"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _sort_memory_search_results_by_reranking_score(
+    memories: list[MemorySearchResult],
+) -> list[MemorySearchResult]:
+    """Return memories ordered by reranking score, best first.
+
+    Items without reranking metadata stay after scored items. Ties preserve the
+    existing order, which keeps behaviour stable for older code paths.
+    """
+
+    indexed_memories = list(enumerate(memories))
+
+    def sort_key(indexed_memory: tuple[int, MemorySearchResult]) -> tuple[bool, float, int]:
+        original_index, memory = indexed_memory
+        final_score = _memory_reranking_final_score(memory)
+        if final_score is None:
+            return (True, 0.0, original_index)
+        return (False, -final_score, original_index)
+
+    return [memory for _, memory in sorted(indexed_memories, key=sort_key)]
+
+
 
 @dataclass
 class ContextPackage:
@@ -421,7 +464,6 @@ class ContextPackage:
             "full_prompt": full_prompt if include_full_prompt else None,
         }
 
-    # --- PATCH26_1_CONTEXT_RERANKING_DEBUG_HOTFIX METHOD START ---
     def memory_reranking_report(self, stage: str = "final") -> list[dict]:
         """Return transparent memory reranking explanations for debug views.
 
@@ -455,7 +497,6 @@ class ContextPackage:
                 report.append(explanation)
                 seen.add(memory_id_int)
         return report
-    # --- PATCH26_1_CONTEXT_RERANKING_DEBUG_HOTFIX METHOD END ---
 
     def _goal_to_debug_dict(self, item: AgentGoalRead) -> dict:
         return {
@@ -921,6 +962,21 @@ class ContextBuilder:
             raw_memories=raw_memories,
         )
 
+        # Reranking is transient request-time metadata. The search service attaches
+        # it to MemorySearchResult objects, and ContextBuilder must make the final
+        # prompt order follow that score after safe deduplication has decided which
+        # memories survive. This keeps the prompt, debug sections, used_memory_ids,
+        # and budget trimming aligned with the same final ordering.
+        final_semantic_memories = _sort_memory_search_results_by_reranking_score(
+            list(deduped.semantic_memories)
+        )
+        final_episodic_memories = _sort_memory_search_results_by_reranking_score(
+            list(deduped.episodic_memories)
+        )
+        final_raw_memories = _sort_memory_search_results_by_reranking_score(
+            list(deduped.raw_memories)
+        )
+
         context_package = ContextPackage(
             agent_id=agent_id,
             session_id=session_id,
@@ -931,9 +987,9 @@ class ContextBuilder:
             current_user_message=user_message,
             short_term_messages=short_term_messages,
             core_memories=deduped.core_memories,
-            semantic_memories=deduped.semantic_memories,
-            episodic_memories=deduped.episodic_memories,
-            raw_memories=list(deduped.raw_memories),
+            semantic_memories=final_semantic_memories,
+            episodic_memories=final_episodic_memories,
+            raw_memories=final_raw_memories,
             goal_items=list(goal_items),
             procedural_skill_items=list(procedural_skill_items),
             procedural_skill_selection=list(procedural_skill_selection),
@@ -956,9 +1012,9 @@ class ContextBuilder:
             retrieved_entity_state_items=list(entity_state_items),
             post_dedup_short_term_messages=list(short_term_messages),
             post_dedup_core_memories=list(deduped.core_memories),
-            post_dedup_semantic_memories=list(deduped.semantic_memories),
-            post_dedup_episodic_memories=list(deduped.episodic_memories),
-            post_dedup_raw_memories=list(deduped.raw_memories),
+            post_dedup_semantic_memories=list(final_semantic_memories),
+            post_dedup_episodic_memories=list(final_episodic_memories),
+            post_dedup_raw_memories=list(final_raw_memories),
             post_dedup_goal_items=list(goal_items),
             post_dedup_procedural_skill_items=list(procedural_skill_items),
             post_dedup_procedural_skill_selection=list(procedural_skill_selection),
