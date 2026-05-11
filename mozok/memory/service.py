@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from sqlalchemy import and_, or_
 
 from sqlalchemy.orm import Session
 
 from mozok.db.models import AgentRecord, MemoryRecord
+from mozok.knowledge_relations.models import KnowledgeRelationRecord
 from mozok.embeddings.base import EmbeddingService
 from mozok.faiss_index.store import FaissMemoryIndex
 from mozok.llm.ollama_openai import OllamaOpenAIClient
@@ -32,6 +34,7 @@ from mozok.memory.summarizer import (
     estimate_summary_emotional_weight,
     estimate_summary_importance,
 )
+from mozok.memory.reranker import MemoryRelationSignal, MemoryReranker, MemoryRerankingContext
 from mozok.schemas.memory import MemoryCreate, MemoryMaintenanceResponse, MemorySearchResult
 
 
@@ -242,18 +245,27 @@ class MemoryService:
 
         records = query_obj.all()
 
-        # Lightweight reranking: vector score + importance + emotional + access bonuses.
-        # Later: relationship score, recency, reranker model, situation-aware weights.
-        ranked = sorted(
+        # Patch 26.4: transparent deterministic reranking for live search results.
+        # The SQL records are not mutated with debug data; reranking explanations
+        # are attached only to the outgoing MemorySearchResult.metadata.
+        relation_signals = self._memory_relation_signals_for_reranking(
+            agent_id=agent_id,
+            memory_ids=[int(record.id) for record in records],
+        )
+        reranked_items = MemoryReranker().rerank(
             records,
-            key=lambda r: (
-                score_by_id.get(r.id, -999.0)
-                + (r.importance * 0.01)
-                + (abs(r.emotional_weight) * 0.01)
-                + (self._access_count(r) * 0.001)
+            vector_scores=score_by_id,
+            context=MemoryRerankingContext(
+                now=self._utc_now(),
+                relation_signals=relation_signals,
             ),
-            reverse=True,
-        )[:limit]
+            limit=limit,
+        )
+        ranked = [item.record for item in reranked_items]
+        reranking_by_id = {
+            int(item.record.id): item.explanation.to_dict()
+            for item in reranked_items
+        }
 
         if update_access and ranked:
             now = self._utc_now()
@@ -264,17 +276,92 @@ class MemoryService:
                 record.last_accessed_at = now
             self.db.commit()
 
-        return [
-            MemorySearchResult(
-                id=r.id,
-                content=r.content,
-                memory_type=r.memory_type,
-                importance=r.importance,
-                score=score_by_id.get(r.id, 0.0),
-                metadata=r.metadata_json or {},
+        results: list[MemorySearchResult] = []
+        for record in ranked:
+            metadata = dict(record.metadata_json or {})
+            explanation = reranking_by_id.get(int(record.id))
+            if explanation is not None:
+                metadata["_reranking"] = explanation
+            results.append(
+                MemorySearchResult(
+                    id=record.id,
+                    content=record.content,
+                    memory_type=record.memory_type,
+                    importance=record.importance,
+                    score=score_by_id.get(record.id, 0.0),
+                    metadata=metadata,
+                )
             )
-            for r in ranked
-        ]
+        return results
+
+
+    def _memory_relation_signals_for_reranking(
+        self,
+        *,
+        agent_id: str,
+        memory_ids: list[int],
+    ) -> dict[int, MemoryRelationSignal]:
+        """Return graph signals for memories without changing SQL or FAISS."""
+
+        if not memory_ids:
+            return {}
+
+        memory_id_strings = [str(memory_id) for memory_id in memory_ids]
+        signals: dict[int, MemoryRelationSignal] = {
+            int(memory_id): MemoryRelationSignal() for memory_id in memory_ids
+        }
+
+        try:
+            relations = (
+                self.db.query(KnowledgeRelationRecord)
+                .filter(
+                    KnowledgeRelationRecord.agent_id == agent_id,
+                    KnowledgeRelationRecord.active == True,  # noqa: E712 - SQLAlchemy syntax
+                    or_(
+                        and_(
+                            KnowledgeRelationRecord.source_type == "memory",
+                            KnowledgeRelationRecord.source_id.in_(memory_id_strings),
+                        ),
+                        and_(
+                            KnowledgeRelationRecord.target_type == "memory",
+                            KnowledgeRelationRecord.target_id.in_(memory_id_strings),
+                        ),
+                    ),
+                )
+                .all()
+            )
+        except Exception:
+            # Some tests or lightweight deployments may not have the relation
+            # table available yet. Reranking must degrade gracefully.
+            return signals
+
+        for relation in relations:
+            try:
+                if relation.source_type == "memory":
+                    memory_id = int(relation.source_id)
+                    other_type = str(relation.target_type or "")
+                else:
+                    memory_id = int(relation.target_id)
+                    other_type = str(relation.source_type or "")
+            except (TypeError, ValueError):
+                continue
+
+            signal = signals.setdefault(memory_id, MemoryRelationSignal())
+            signal.relation_count += 1
+            signal.max_strength = max(signal.max_strength, float(relation.strength or 0.0))
+            signal.max_confidence = max(signal.max_confidence, float(relation.confidence or 0.0))
+            if relation.relation_type:
+                signal.relation_types.append(str(relation.relation_type))
+
+            normalised_other_type = other_type.lower()
+            if normalised_other_type in {"goal", "agent_goal", "plan_step"}:
+                signal.active_goal_count += 1
+            elif normalised_other_type in {"lorebook", "lorebook_entry", "lore"}:
+                signal.lorebook_count += 1
+            elif normalised_other_type in {"entity_state", "entity", "faction", "quest", "location", "object"}:
+                signal.entity_state_count += 1
+
+        return signals
 
     # ---------------------------------------------------------------------
     # Forget actions
