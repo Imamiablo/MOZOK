@@ -8,6 +8,7 @@ from mozok.context.context_builder import ContextBuilder
 from mozok.core.bot_core import get_memory_service
 from mozok.db.session import get_db
 from mozok.cognition.schemas import CognitiveFieldDebugRequest, CognitiveFieldReport
+from mozok.perception.service import PerceptionCompiler
 
 router = APIRouter(tags=["cognition"])
 
@@ -16,6 +17,16 @@ router = APIRouter(tags=["cognition"])
 def debug_agent_cognitive_field(agent_id: str, data: CognitiveFieldDebugRequest, db: Session = Depends(get_db)):
     """Run a read-only Cognitive Field pass without calling the LLM."""
     agent = AgentService(db).get_or_create_default_agent(agent_id)
+    sensory_inputs = data.sensory_inputs
+    if data.perception_events:
+        perception = PerceptionCompiler().compile(
+            events=data.perception_events,
+            existing_sensory_inputs=sensory_inputs,
+            profile=data.perception_profile,
+            message=data.message,
+        )
+        sensory_inputs = perception.sensory_inputs
+
     context = ContextBuilder(db=db, memory_service=get_memory_service(db)).build(
         agent=agent,
         user_message=data.message,
@@ -47,7 +58,7 @@ def debug_agent_cognitive_field(agent_id: str, data: CognitiveFieldDebugRequest,
         include_entity_states=data.include_entity_states,
         entity_state_limit=data.entity_state_limit,
         enable_cognitive_field=True,
-        sensory_inputs=data.sensory_inputs,
+        sensory_inputs=sensory_inputs,
         attention_focus_keywords=data.attention_focus_keywords,
         cognitive_max_candidates=data.cognitive_max_candidates,
         cognitive_broadcast_top_n=data.cognitive_broadcast_top_n,

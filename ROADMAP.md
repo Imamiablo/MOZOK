@@ -1,6 +1,6 @@
 # MOZOK ROADMAP
 
-## Current status after version 32
+## Current status after version 33
 
 MOZOK is a reusable bot-brain backend built around:
 
@@ -26,6 +26,7 @@ MOZOK is a reusable bot-brain backend built around:
 - Dedup V2 audit
 - Knowledge Relations V3 graph intelligence
 - Procedural Skills V3 learning and shared skill libraries
+- Cognitive Field MVP resonance/competition/broadcast layer
 
 ## Implemented MVP features
 
@@ -88,6 +89,16 @@ MOZOK is a reusable bot-brain backend built around:
 - EntityState for social/user/narrative/faction/quest state
 - Goals/plans as separate first-class records
 - KnowledgeRelation graph edges
+
+### Cognitive Field MVP
+
+- Optional deterministic candidate-thought generation.
+- Scores attention, sensory weight, memory resonance, goal relevance, emotional weight, procedural skill relevance, relation support, contradiction penalty, risk penalty, and confidence.
+- Supports transient `sensory_inputs` for game/world/tool/UI signals.
+- Selects a read-only conscious-broadcast-style focus for the current turn.
+- Can be injected into `/debug/context` and `/chat` through opt-in request fields.
+- Dedicated read-only debug endpoint: `POST /agents/{agent_id}/cognition/field/debug`.
+- Does not claim biological or phenomenal consciousness and does not mutate memories, goals, skills, relations, or entity states by itself.
 
 ### Procedural skills
 
@@ -188,7 +199,7 @@ MOZOK is a reusable bot-brain backend built around:
 - Stray patch history under `mozok/docs/patch_history` was consolidated into `docs/patch_history`.
 - `ROADMAP.md` added as the current plan document.
 - `requirements.txt` and `requirements-dev.txt` restored/updated.
-- Full pytest run passes in the review environment: 145 passed, 3 skipped.
+- Full pytest run passes in the previous review environment: 145 passed, 3 skipped. Version 33 adds focused Cognitive Field tests; run full pytest locally after installing dependencies.
 
 ## Known non-blocking warnings / checks
 
@@ -196,7 +207,57 @@ MOZOK is a reusable bot-brain backend built around:
 - The 3 skipped tests are real HTTP smoke tests. They require a running local Mozok API and should be checked manually through Swagger UI / running server.
 - Brain-pack memory import uses MemoryService after structural scenario sections. Embeddings and FAISS writes are owned by MemoryService; they are not rolled back by the scenario-section transaction wrapper.
 
-## Next development priorities
+## Roadmap V2 candidates
+
+### 1. Safe Change Proposals / Approval Engine
+
+- Generic change proposals for memory, goals, skills, entity states, relations, and future action plans.
+- Modes: manual review, apply low-risk changes, auto-apply with rollback snapshot, dry-run only.
+- Unified preview/apply/reject result format so users can approve changes efficiently.
+- Guardrails so automatic learning cannot silently damage long-term state.
+
+### 2. Agent Mode Profiles
+
+- Modes such as assistant, roleplay_character, simulacra_npc, narrator, world_director, tutor, and tool_agent.
+- Mode-specific defaults for lore visibility, entity-state kinds, relationship modelling, cognitive-field weights, and allowed actions.
+
+### 3. Self-Model / Reflective State
+
+- A functional self-model, not a consciousness claim.
+- Assistant agents track task understanding, uncertainty, user-preference fit, limitations, and recent mistakes.
+- NPCs track identity, perceived situation, social mask, current intention, and emotional/social state.
+- Narrators track scene tension, pacing, unresolved plot hooks, and dramatic focus.
+
+### 4. Reflection and Learning Loop
+
+- After each response/action, evaluate what happened, whether goals were served, whether memories or skills should be updated, and whether contradictions appeared.
+- Produce safe change proposals instead of mutating important state directly.
+
+### 5. Action Planning / Tool Intent Layer
+
+- Represent intended actions separately from text replies.
+- Support assistant tools, game commands, narrator events, and world updates through reviewed action plans.
+
+### 6. Belief Revision / Contradiction Handling
+
+- Convert Dedup V2 contradiction/supersedes signals into state-update proposals.
+- Weaken, contextualise, or supersede outdated beliefs instead of keeping every memory equally active.
+
+### 7. Agent Runtime Tick MVP
+
+- Let simulacra/NPC agents act between user messages.
+- Tick loop: retrieve context, run cognitive field, choose intention/action, reflect, propose safe updates.
+
+### 8. World Event Bus
+
+- Standard event records for game/app integrations: location changes, sounds, visual observations, social events, tool observations, and system events.
+- Events can feed sensory inputs, episodic memory, goals, skills, and entity states.
+
+### 9. Evaluation Packs V2
+
+- Extend scenario regression packs to check cognitive broadcasts, expected actions, emotional/entity-state changes, and forbidden leakage.
+
+## Deferred development priorities
 
 ### 1. Maintenance V3
 
@@ -215,3 +276,23 @@ MOZOK is a reusable bot-brain backend built around:
 - per-agent reranking profiles
 - more advanced relation graph scoring
 - evaluation dataset for ranking quality
+
+
+### 9. Cognitive Field MVP - DONE
+
+- candidate thoughts
+- attention competition
+- memory resonance
+- goal relevance
+- procedural skill relevance
+- sensory input support
+- conscious-broadcast-style prompt guidance
+
+### 10. Perception Layer MVP - DONE
+
+- adapter-neutral event input
+- deterministic event → sensory input compiler
+- direct sensory inputs preserved
+- perception profile for channel weighting/filtering
+- `/perception/compile` endpoint
+- integration with `/chat`, `/debug/context`, and Cognitive Field debug

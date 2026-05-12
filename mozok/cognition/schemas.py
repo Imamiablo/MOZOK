@@ -83,6 +83,8 @@ class CognitiveFieldReport(BaseModel):
 class CognitiveFieldConfig(BaseModel):
     enable_cognitive_field: bool = Field(default=False, description="Run Cognitive Field MVP and expose a broadcast report.")
     sensory_inputs: list[SensoryInput] = Field(default_factory=list)
+    perception_events: list[dict[str, Any]] = Field(default_factory=list)
+    perception_profile: dict[str, Any] = Field(default_factory=dict)
     attention_focus_keywords: list[str] = Field(default_factory=list)
     cognitive_max_candidates: int = Field(default=12, ge=1, le=100)
     cognitive_broadcast_top_n: int = Field(default=3, ge=1, le=10)
@@ -119,6 +121,8 @@ class CognitiveFieldDebugRequest(BaseModel):
     max_prompt_tokens: int = Field(default=6000, ge=100, le=200000)
     reserved_response_tokens: int = Field(default=1000, ge=0, le=100000)
     sensory_inputs: list[SensoryInput] = Field(default_factory=list)
+    perception_events: list[dict[str, Any]] = Field(default_factory=list)
+    perception_profile: dict[str, Any] = Field(default_factory=dict)
     attention_focus_keywords: list[str] = Field(default_factory=list)
     cognitive_max_candidates: int = Field(default=12, ge=1, le=100)
     cognitive_broadcast_top_n: int = Field(default=3, ge=1, le=10)

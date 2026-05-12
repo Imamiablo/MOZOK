@@ -10,6 +10,7 @@ from mozok.memory.service import MemoryService
 from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
 from mozok.schemas.chat import ChatResponse
 from mozok.schemas.memory import MemoryCreate
+from mozok.perception.schemas import PerceptionEvent, PerceptionProfile
 
 
 def get_memory_service(db: Session) -> MemoryService:
@@ -52,6 +53,8 @@ class BotCore:
         budget_aware_graph_expansion: bool = True,
         enable_cognitive_field: bool = False,
         sensory_inputs: list | None = None,
+        perception_events: list[PerceptionEvent] | None = None,
+        perception_profile: PerceptionProfile | None = None,
         attention_focus_keywords: list[str] | None = None,
         cognitive_max_candidates: int = 12,
         cognitive_broadcast_top_n: int = 3,
@@ -106,6 +109,8 @@ class BotCore:
             budget_aware_graph_expansion=budget_aware_graph_expansion,
             enable_cognitive_field=enable_cognitive_field,
             sensory_inputs=sensory_inputs or [],
+            perception_events=perception_events or [],
+            perception_profile=perception_profile,
             attention_focus_keywords=attention_focus_keywords or [],
             cognitive_max_candidates=cognitive_max_candidates,
             cognitive_broadcast_top_n=cognitive_broadcast_top_n,

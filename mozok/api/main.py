@@ -18,6 +18,8 @@ from mozok.api.procedural_skill_routes import router as procedural_skill_router
 from mozok.api.lorebook_routes import router as lorebook_router
 from mozok.api.brain_pack_routes import router as brain_pack_router
 from mozok.api.cognition_routes import router as cognition_router
+from mozok.api.perception_routes import router as perception_router
+from mozok.api.change_proposal_routes import router as change_proposal_router
 from mozok.schemas.memory import (
     MemoryCreate,
     MemoryForgetRequest,
@@ -45,6 +47,8 @@ app.include_router(procedural_skill_router)
 app.include_router(lorebook_router)
 app.include_router(brain_pack_router)
 app.include_router(cognition_router)
+app.include_router(perception_router)
+app.include_router(change_proposal_router)
 
 @app.get("/")
 def root():
@@ -254,6 +258,8 @@ def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
         budget_aware_graph_expansion=data.budget_aware_graph_expansion,
         enable_cognitive_field=data.enable_cognitive_field,
         sensory_inputs=data.sensory_inputs,
+        perception_events=data.perception_events,
+        perception_profile=data.perception_profile,
         attention_focus_keywords=data.attention_focus_keywords,
         cognitive_max_candidates=data.cognitive_max_candidates,
         cognitive_broadcast_top_n=data.cognitive_broadcast_top_n,
@@ -315,6 +321,8 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             budget_aware_graph_expansion=data.budget_aware_graph_expansion,
             enable_cognitive_field=data.enable_cognitive_field,
             sensory_inputs=data.sensory_inputs,
+            perception_events=data.perception_events,
+            perception_profile=data.perception_profile,
             attention_focus_keywords=data.attention_focus_keywords,
             cognitive_max_candidates=data.cognitive_max_candidates,
             cognitive_broadcast_top_n=data.cognitive_broadcast_top_n,

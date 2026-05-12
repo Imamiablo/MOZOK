@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 
 from mozok.cognition.schemas import SensoryInput
+from mozok.perception.schemas import PerceptionEvent, PerceptionProfile
 
 
 class ContextDebugRequest(BaseModel):
@@ -240,7 +241,15 @@ class ContextDebugRequest(BaseModel):
     )
     sensory_inputs: list[SensoryInput] = Field(
         default_factory=list,
-        description="Optional sensory/tool/world signals that can compete for attention this turn.",
+        description="Optional direct sensory/tool/world signals that can compete for attention this turn.",
+    )
+    perception_events: list[PerceptionEvent] = Field(
+        default_factory=list,
+        description="Optional adapter-neutral events to compile into sensory inputs before Cognitive Field scoring.",
+    )
+    perception_profile: PerceptionProfile = Field(
+        default_factory=PerceptionProfile,
+        description="Optional policy for compiling perception_events into sensory inputs.",
     )
     attention_focus_keywords: list[str] = Field(
         default_factory=list,

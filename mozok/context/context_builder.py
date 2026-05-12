@@ -22,6 +22,8 @@ from mozok.schemas.knowledge_relations import KnowledgeGraphRootNode, KnowledgeR
 from mozok.schemas.procedural_skills import AgentProceduralSkillRead
 from mozok.cognition.schemas import CognitiveFieldReport, SensoryInput
 from mozok.cognition.service import CognitiveFieldService
+from mozok.perception.schemas import PerceptionEvent, PerceptionProfile, PerceptionReport
+from mozok.perception.service import PerceptionCompiler
 from mozok.schemas.memory import MemorySearchResult
 
 def _memory_reranking_final_score(memory: MemorySearchResult) -> float | None:
@@ -103,6 +105,7 @@ class ContextPackage:
     compressed_item_text: dict[str, str] = field(default_factory=dict)
     budget_aware_graph_expansion: dict = field(default_factory=dict)
     cognitive_field: CognitiveFieldReport | None = None
+    perception_report: PerceptionReport | None = None
 
     # Debug-only snapshots used to explain the context assembly pipeline.
     # These are copies of earlier stages so later budget trimming can mutate the
@@ -327,6 +330,7 @@ class ContextPackage:
                 "prompt_characters": len(final_prompt),
                 "memory_reranking": self.memory_reranking_report(stage="final"),
                 "cognitive_field": self.cognitive_field.model_dump() if self.cognitive_field else None,
+                "perception": self.perception_report.model_dump() if self.perception_report else None,
                 "notes": self._final_prompt_notes(final_counts, over_budget_after_trimming),
             },
         ]
@@ -457,6 +461,7 @@ class ContextPackage:
             "dedup_removed_details": [item.to_dict() for item in self.dedup_removed_memories],
             "context_budget": self.context_budget.to_dict() if self.context_budget else None,
             "cognitive_field": self.cognitive_field.model_dump() if self.cognitive_field else None,
+            "perception": self.perception_report.model_dump() if self.perception_report else None,
             "memory_reranking": self.memory_reranking_report(stage="final"),
             "pipeline_steps": self.pipeline_steps(),
             "sections": {
@@ -893,6 +898,8 @@ class ContextBuilder:
         budget_aware_graph_expansion: bool = True,
         enable_cognitive_field: bool = False,
         sensory_inputs: list[SensoryInput] | None = None,
+        perception_events: list[PerceptionEvent] | None = None,
+        perception_profile: PerceptionProfile | None = None,
         attention_focus_keywords: list[str] | None = None,
         cognitive_max_candidates: int = 12,
         cognitive_broadcast_top_n: int = 3,
@@ -1211,10 +1218,21 @@ class ContextBuilder:
             post_dedup_entity_state_items=list(entity_state_items),
         )
 
+        compiled_sensory_inputs = list(sensory_inputs or [])
+        if perception_events:
+            perception = PerceptionCompiler().compile(
+                events=perception_events or [],
+                existing_sensory_inputs=compiled_sensory_inputs,
+                profile=perception_profile or PerceptionProfile(),
+                message=user_message,
+            )
+            context_package.perception_report = perception.report
+            compiled_sensory_inputs = perception.sensory_inputs
+
         if enable_cognitive_field:
             context_package.cognitive_field = CognitiveFieldService().run(
                 context_package=context_package,
-                sensory_inputs=sensory_inputs or [],
+                sensory_inputs=compiled_sensory_inputs,
                 attention_focus_keywords=attention_focus_keywords or [],
                 max_candidates=cognitive_max_candidates,
                 broadcast_top_n=cognitive_broadcast_top_n,
