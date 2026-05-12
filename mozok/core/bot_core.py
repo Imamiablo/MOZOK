@@ -11,6 +11,8 @@ from mozok.memory.short_term_memory import SHORT_TERM_MEMORY
 from mozok.schemas.chat import ChatResponse
 from mozok.schemas.memory import MemoryCreate
 from mozok.perception.schemas import PerceptionEvent, PerceptionProfile
+from mozok.reflection.schemas import ReflectionRequest
+from mozok.reflection.service import ReflectionService
 
 
 def get_memory_service(db: Session) -> MemoryService:
@@ -59,6 +61,12 @@ class BotCore:
         cognitive_max_candidates: int = 12,
         cognitive_broadcast_top_n: int = 3,
         cognitive_min_score: float = 0.0,
+        enable_reflection_loop: bool = False,
+        reflection_approval_mode: str = "manual_review",
+        reflection_auto_apply: bool = False,
+        reflection_store_proposals: bool = True,
+        reflection_outcome: str = "unknown",
+        reflection_feedback: str = "",
         include_goals: bool = True,
         goal_limit: int = 10,
         goal_status: str | None = None,
@@ -165,6 +173,27 @@ class BotCore:
             content=response_text,
         )
 
+        reflection_report = None
+        if enable_reflection_loop:
+            reflection_report = ReflectionService(db=self.db, memory_service=self.memory).reflect(
+                ReflectionRequest(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    user_message=message,
+                    assistant_response=response_text,
+                    cognitive_field=context.cognitive_field.model_dump() if context.cognitive_field else None,
+                    used_memory_ids=context.used_memory_ids(),
+                    used_goal_ids=context.used_goal_ids(),
+                    used_procedural_skill_ids=context.used_procedural_skill_ids(),
+                    outcome=reflection_outcome,
+                    feedback=reflection_feedback,
+                    create_change_proposals=True,
+                    approval_mode=reflection_approval_mode,
+                    auto_apply=reflection_auto_apply,
+                    store_proposals=reflection_store_proposals,
+                )
+            )
+
         # Raw dialogue is useful for later consolidation, but it should not be
         # treated as an important long-term fact. Maintenance can later summarize
         # raw dialogue into semantic memories and archive the noisy originals.
@@ -213,4 +242,5 @@ class BotCore:
             dedup_removed_memories_count=context.dedup_removed_count(),
             context_budget=context.context_budget.to_dict() if context.context_budget else None,
             cognitive_field=context.cognitive_field.model_dump() if context.cognitive_field else None,
+            reflection_report=reflection_report.model_dump() if reflection_report else None,
         )

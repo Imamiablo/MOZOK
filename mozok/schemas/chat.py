@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from mozok.cognition.schemas import SensoryInput
 from mozok.perception.schemas import PerceptionEvent, PerceptionProfile
+from mozok.change_proposals.schemas import ApprovalMode
 
 
 class ChatRequest(BaseModel):
@@ -251,6 +252,28 @@ class ChatRequest(BaseModel):
     cognitive_broadcast_top_n: int = Field(default=3, ge=1, le=10)
     cognitive_min_score: float = Field(default=0.0, ge=-100.0, le=100.0)
 
+    enable_reflection_loop: bool = Field(
+        default=False,
+        description="If true, run the post-turn reflection loop after the assistant response and create safe change proposals.",
+    )
+    reflection_approval_mode: ApprovalMode = Field(
+        default="manual_review",
+        description="How reflection-created proposals should be handled: manual_review, apply_low_risk, auto_with_rollback, or dry_run_only.",
+    )
+    reflection_auto_apply: bool = Field(
+        default=False,
+        description="If true, immediately run the configured approval policy after creating reflection proposals.",
+    )
+    reflection_store_proposals: bool = Field(
+        default=True,
+        description="If true, store reflection proposals under the agent's change proposal list.",
+    )
+    reflection_outcome: str = Field(
+        default="unknown",
+        description="Optional caller-provided outcome hint for the turn: unknown, success, neutral, or failure.",
+    )
+    reflection_feedback: str = Field(default="", description="Optional explicit feedback used by the reflection loop.")
+
 
 class ChatResponse(BaseModel):
     agent_id: str
@@ -276,3 +299,4 @@ class ChatResponse(BaseModel):
     dedup_removed_memories_count: int = 0
     context_budget: dict[str, Any] | None = None
     cognitive_field: dict[str, Any] | None = None
+    reflection_report: dict[str, Any] | None = None

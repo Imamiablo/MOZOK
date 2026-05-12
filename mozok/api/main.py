@@ -20,6 +20,7 @@ from mozok.api.brain_pack_routes import router as brain_pack_router
 from mozok.api.cognition_routes import router as cognition_router
 from mozok.api.perception_routes import router as perception_router
 from mozok.api.change_proposal_routes import router as change_proposal_router
+from mozok.api.reflection_routes import router as reflection_router
 from mozok.schemas.memory import (
     MemoryCreate,
     MemoryForgetRequest,
@@ -49,6 +50,7 @@ app.include_router(brain_pack_router)
 app.include_router(cognition_router)
 app.include_router(perception_router)
 app.include_router(change_proposal_router)
+app.include_router(reflection_router)
 
 @app.get("/")
 def root():
@@ -327,6 +329,12 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             cognitive_max_candidates=data.cognitive_max_candidates,
             cognitive_broadcast_top_n=data.cognitive_broadcast_top_n,
             cognitive_min_score=data.cognitive_min_score,
+            enable_reflection_loop=data.enable_reflection_loop,
+            reflection_approval_mode=data.reflection_approval_mode,
+            reflection_auto_apply=data.reflection_auto_apply,
+            reflection_store_proposals=data.reflection_store_proposals,
+            reflection_outcome=data.reflection_outcome,
+            reflection_feedback=data.reflection_feedback,
             include_goals=data.include_goals,
             goal_limit=data.goal_limit,
             goal_status=data.goal_status,
