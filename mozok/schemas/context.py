@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from mozok.cognition.schemas import SensoryInput
+
 
 class ContextDebugRequest(BaseModel):
     """Request body for /debug/context.
@@ -228,6 +230,25 @@ class ContextDebugRequest(BaseModel):
         default=True,
         description="If true, cap knowledge-relation graph expansion using the knowledge_relations section budget.",
     )
+
+    enable_cognitive_field: bool = Field(
+        default=False,
+        description=(
+            "If true, run the Cognitive Field MVP: candidate thoughts compete by attention, sensory weight, "
+            "memory resonance, goal relevance, skill relevance, contradiction penalties, and risk penalties."
+        ),
+    )
+    sensory_inputs: list[SensoryInput] = Field(
+        default_factory=list,
+        description="Optional sensory/tool/world signals that can compete for attention this turn.",
+    )
+    attention_focus_keywords: list[str] = Field(
+        default_factory=list,
+        description="Optional deliberate attention focus keywords for the Cognitive Field.",
+    )
+    cognitive_max_candidates: int = Field(default=12, ge=1, le=100)
+    cognitive_broadcast_top_n: int = Field(default=3, ge=1, le=10)
+    cognitive_min_score: float = Field(default=0.0, ge=-100.0, le=100.0)
 
     include_full_prompt: bool = Field(
         default=True,

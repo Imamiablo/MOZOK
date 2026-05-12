@@ -20,6 +20,8 @@ from mozok.lorebook.service import LorebookService, format_lorebook_context
 from mozok.schemas.entity_state import EntityStateRead
 from mozok.schemas.knowledge_relations import KnowledgeGraphRootNode, KnowledgeRelationGraphDebugRequest, KnowledgeRelationRead
 from mozok.schemas.procedural_skills import AgentProceduralSkillRead
+from mozok.cognition.schemas import CognitiveFieldReport, SensoryInput
+from mozok.cognition.service import CognitiveFieldService
 from mozok.schemas.memory import MemorySearchResult
 
 def _memory_reranking_final_score(memory: MemorySearchResult) -> float | None:
@@ -100,6 +102,7 @@ class ContextPackage:
     context_budget: ContextBudgetReport | None = None
     compressed_item_text: dict[str, str] = field(default_factory=dict)
     budget_aware_graph_expansion: dict = field(default_factory=dict)
+    cognitive_field: CognitiveFieldReport | None = None
 
     # Debug-only snapshots used to explain the context assembly pipeline.
     # These are copies of earlier stages so later budget trimming can mutate the
@@ -290,6 +293,23 @@ class ContextPackage:
                 "output_counts": final_counts,
                 "budget": budget_report,
             },
+            *(
+                [
+                    {
+                        "step": "cognitive_broadcast",
+                        "label": "Selected Cognitive Field broadcast",
+                        "description": "Optional cognition layer generated candidate thoughts, scored them through resonance/competition, and selected a read-only broadcast focus.",
+                        "status": "changed" if self.cognitive_field and self.cognitive_field.winning_thought_id else "ok",
+                        "enabled": bool(self.cognitive_field),
+                        "winning_thought_id": self.cognitive_field.winning_thought_id if self.cognitive_field else None,
+                        "winning_score": self.cognitive_field.winning_score if self.cognitive_field else None,
+                        "candidate_count": self.cognitive_field.candidate_count if self.cognitive_field else 0,
+                        "broadcast": self.cognitive_field.broadcast.model_dump() if self.cognitive_field else None,
+                    }
+                ]
+                if self.cognitive_field
+                else []
+            ),
             {
                 "step": "final_prompt",
                 "label": "Final prompt context",
@@ -306,6 +326,7 @@ class ContextPackage:
                 "estimated_prompt_tokens": final_estimated_tokens,
                 "prompt_characters": len(final_prompt),
                 "memory_reranking": self.memory_reranking_report(stage="final"),
+                "cognitive_field": self.cognitive_field.model_dump() if self.cognitive_field else None,
                 "notes": self._final_prompt_notes(final_counts, over_budget_after_trimming),
             },
         ]
@@ -435,6 +456,7 @@ class ContextPackage:
             "dedup_removed_memory_ids": self.dedup_removed_memory_ids(),
             "dedup_removed_details": [item.to_dict() for item in self.dedup_removed_memories],
             "context_budget": self.context_budget.to_dict() if self.context_budget else None,
+            "cognitive_field": self.cognitive_field.model_dump() if self.cognitive_field else None,
             "memory_reranking": self.memory_reranking_report(stage="final"),
             "pipeline_steps": self.pipeline_steps(),
             "sections": {
@@ -731,6 +753,9 @@ class ContextPackage:
                 )
             )
 
+        if self.cognitive_field:
+            sections.append(self._format_cognitive_field_for_prompt())
+
         sections.append(
             "Current user message:\n"
             f"{self.current_user_message}"
@@ -754,6 +779,42 @@ class ContextPackage:
         )
 
         return "\n\n---\n\n".join(section for section in sections if section.strip())
+
+    def _format_cognitive_field_for_prompt(self) -> str:
+        """Render the optional Cognitive Field broadcast as soft prompt guidance.
+
+        The Cognitive Field is deliberately read-only at this stage. It should
+        guide the current response focus, but it must not be treated as a
+        permission to create or modify memories, goals, entity states, skills,
+        relations, or FAISS entries.
+        """
+
+        if not self.cognitive_field:
+            return ""
+
+        broadcast = self.cognitive_field.broadcast
+        lines = ["Cognitive Field / broadcast focus for this turn:"]
+
+        if broadcast.working_memory_line:
+            lines.append(f"- Working focus: {broadcast.working_memory_line}")
+        elif broadcast.summary:
+            lines.append(f"- Working focus: {broadcast.summary}")
+
+        if broadcast.attention_focus:
+            lines.append("- Attention focus: " + ", ".join(str(item) for item in broadcast.attention_focus))
+
+        if broadcast.prompt_guidance:
+            lines.append(f"- Prompt guidance: {broadcast.prompt_guidance}")
+
+        if broadcast.update_recommendations:
+            lines.append(
+                "- Update policy: "
+                + " ".join(str(item) for item in broadcast.update_recommendations)
+            )
+        else:
+            lines.append("- Update policy: read-only; do not persist changes from this broadcast alone.")
+
+        return "\n".join(lines)
 
     def _context_item_text(self, source: str, item, fallback: str) -> str:
         compressed = self.compressed_item_text.get(context_item_key(source, item))
@@ -830,6 +891,12 @@ class ContextBuilder:
         compression_enabled: bool = True,
         short_term_summarization_enabled: bool = True,
         budget_aware_graph_expansion: bool = True,
+        enable_cognitive_field: bool = False,
+        sensory_inputs: list[SensoryInput] | None = None,
+        attention_focus_keywords: list[str] | None = None,
+        cognitive_max_candidates: int = 12,
+        cognitive_broadcast_top_n: int = 3,
+        cognitive_min_score: float = 0.0,
         include_goals: bool = False,
         goal_limit: int = 10,
         goal_status: str | None = None,
@@ -1143,6 +1210,16 @@ class ContextBuilder:
             post_dedup_lorebook_items=list(lorebook_items),
             post_dedup_entity_state_items=list(entity_state_items),
         )
+
+        if enable_cognitive_field:
+            context_package.cognitive_field = CognitiveFieldService().run(
+                context_package=context_package,
+                sensory_inputs=sensory_inputs or [],
+                attention_focus_keywords=attention_focus_keywords or [],
+                max_candidates=cognitive_max_candidates,
+                broadcast_top_n=cognitive_broadcast_top_n,
+                min_score=cognitive_min_score,
+            )
 
         context_package.context_budget = ContextBudgeter(budget_policy).apply(context_package)
 
