@@ -10,6 +10,35 @@ from mozok.change_proposals.schemas import ApprovalMode, ChangeProposalRead
 ReflectionOutcome = Literal["unknown", "success", "neutral", "failure"]
 
 
+class ReflectionGoalUpdateHint(BaseModel):
+    goal_id: int | None = None
+    patch: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = ""
+
+
+class ReflectionEntityStateUpdateHint(BaseModel):
+    state_id: int | None = None
+    patch: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = ""
+
+
+class ReflectionBeliefRevisionTrigger(BaseModel):
+    claim_content: str
+    source: str = "reflection_loop"
+    confidence: float = Field(default=0.65, ge=0.0, le=1.0)
+    world_id: str = "default"
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    goal_update_hints: list[ReflectionGoalUpdateHint] = Field(default_factory=list)
+    entity_state_update_hints: list[ReflectionEntityStateUpdateHint] = Field(default_factory=list)
+    belief_revision_triggers: list[ReflectionBeliefRevisionTrigger] = Field(default_factory=list)
+    auto_detect_belief_revision: bool = Field(
+        default=False,
+        description="If true, create a review proposal when the turn appears to correct or supersede an existing belief.",
+    )
+
+
 class ReflectionRequest(BaseModel):
     """Reflect on one completed turn and optionally create safe change proposals."""
 
@@ -30,6 +59,14 @@ class ReflectionRequest(BaseModel):
     memory_importance: int = Field(default=4, ge=1, le=10)
     max_summary_chars: int = Field(default=420, ge=80, le=2000)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    goal_update_hints: list[ReflectionGoalUpdateHint] = Field(default_factory=list)
+    entity_state_update_hints: list[ReflectionEntityStateUpdateHint] = Field(default_factory=list)
+    belief_revision_triggers: list[ReflectionBeliefRevisionTrigger] = Field(default_factory=list)
+    auto_detect_belief_revision: bool = Field(
+        default=False,
+        description="If true, create a review proposal when the turn appears to correct or supersede an existing belief.",
+    )
 
 
 class ReflectionSignal(BaseModel):

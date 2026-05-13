@@ -110,6 +110,9 @@ class ContextPackage:
     perception_report: PerceptionReport | None = None
     agent_mode_profile: AgentModeProfile | None = None
     agent_mode_resolution: dict = field(default_factory=dict)
+    self_model: dict | None = None
+    self_model_prompt_block: str = ""
+    action_plan: dict | None = None
 
     # Debug-only snapshots used to explain the context assembly pipeline.
     # These are copies of earlier stages so later budget trimming can mutate the
@@ -470,6 +473,8 @@ class ContextPackage:
             "perception": self.perception_report.model_dump() if self.perception_report else None,
             "agent_mode": self.agent_mode_profile.model_dump() if self.agent_mode_profile else None,
             "agent_mode_resolution": self.agent_mode_resolution,
+            "self_model": self.self_model,
+            "action_plan": self.action_plan,
             "memory_reranking": self.memory_reranking_report(stage="final"),
             "pipeline_steps": self.pipeline_steps(),
             "sections": {
@@ -769,6 +774,12 @@ class ContextPackage:
                 )
             )
 
+        if self.self_model_prompt_block:
+            sections.append(self.self_model_prompt_block)
+
+        if self.action_plan:
+            sections.append(self._format_action_plan_for_prompt())
+
         if self.cognitive_field:
             sections.append(self._format_cognitive_field_for_prompt())
 
@@ -821,6 +832,22 @@ class ContextPackage:
         if profile.allowed_entity_state_kinds is not None:
             lines.append("- Allowed entity-state kinds: " + ", ".join(profile.allowed_entity_state_kinds))
         lines.append(f"- Narrator-only lore allowed by this mode: {profile.allow_narrator_only_lore}")
+        return "\n".join(lines)
+
+    def _format_action_plan_for_prompt(self) -> str:
+        if not self.action_plan:
+            return ""
+        selected = self.action_plan.get("selected_action") or {}
+        lines = ["Action plan / adapter intent for this turn:"]
+        if selected:
+            lines.append(f"- Selected: {selected.get('label') or selected.get('action_id')} ({selected.get('action_kind')})")
+            if selected.get("tool_name"):
+                lines.append(f"- Tool: {selected.get('tool_name')}")
+            lines.append(f"- Status: {selected.get('status')}; approval_required={selected.get('approval_required')}")
+            if selected.get("rationale"):
+                lines.append(f"- Rationale: {selected.get('rationale')}")
+        policy = self.action_plan.get("execution_policy") or {}
+        lines.append(f"- Execution policy: adapter_owned={policy.get('adapter_required', True)}, executes_tools={policy.get('executes_tools', False)}")
         return "\n".join(lines)
 
     def _format_cognitive_field_for_prompt(self) -> str:

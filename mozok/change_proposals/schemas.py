@@ -12,6 +12,9 @@ ProposalStatus = Literal["pending", "applied", "rejected"]
 OperationType = Literal[
     "add_memory",
     "update_agent_metadata",
+    "update_goal",
+    "update_entity_state",
+    "add_knowledge_relation",
     "record_skill_usage_result",
     "no_op",
 ]

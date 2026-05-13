@@ -174,7 +174,7 @@ class ActionPlanningService:
         if self.db is None:
             return {"mode": explicit_mode or "assistant", "can_execute_actions": explicit_mode in {"simulacra_npc", "world_director", "tool_agent"}}
         agent = AgentService(self.db).get_or_create_default_agent(agent_id)
-        resolved = AgentModeService().resolve(agent, explicit_mode=explicit_mode)
+        resolved = AgentModeService().resolve(agent, agent_mode=explicit_mode)
         return resolved.profile.model_dump(mode="json")
 
     def _sensory_bonus(self, tool: ActionToolSpec, sensory_inputs: list[dict[str, Any]]) -> float:

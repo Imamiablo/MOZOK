@@ -21,6 +21,12 @@ def _compact(value: Any, max_chars: int = 420) -> str:
     return text[: max_chars - 3] + "..."
 
 
+def _looks_like_belief_revision(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = ["actually", "correction", "not true", "no longer", "anymore", "instead", "now", "насправді", "не так", "тепер", "більше не"]
+    return any(marker in lowered for marker in markers)
+
+
 def _winning_skill_id(cognitive_field: dict[str, Any] | None) -> int | None:
     if not cognitive_field:
         return None
@@ -118,6 +124,42 @@ class ReflectionService:
                     summary=_compact(f"Outcome: {request.outcome}. Feedback: {request.feedback}"),
                     confidence=0.7,
                     evidence=["explicit_reflection_feedback"],
+                )
+            )
+        for hint in request.goal_update_hints:
+            signals.append(
+                ReflectionSignal(
+                    signal_type="goal_update_hint",
+                    summary=_compact(hint.rationale or f"Goal update requested for goal_id={hint.goal_id}: {hint.patch}"),
+                    confidence=0.8,
+                    evidence=["reflection_goal_update_hint"],
+                )
+            )
+        for hint in request.entity_state_update_hints:
+            signals.append(
+                ReflectionSignal(
+                    signal_type="entity_state_update_hint",
+                    summary=_compact(hint.rationale or f"Entity-state update requested for state_id={hint.state_id}: {hint.patch}"),
+                    confidence=0.8,
+                    evidence=["reflection_entity_state_update_hint"],
+                )
+            )
+        for trigger in request.belief_revision_triggers:
+            signals.append(
+                ReflectionSignal(
+                    signal_type="belief_revision_trigger",
+                    summary=_compact(trigger.claim_content),
+                    confidence=trigger.confidence,
+                    evidence=["reflection_belief_revision_trigger"],
+                )
+            )
+        if request.auto_detect_belief_revision and _looks_like_belief_revision(" ".join([request.user_message, request.assistant_response, request.feedback])):
+            signals.append(
+                ReflectionSignal(
+                    signal_type="belief_revision_trigger",
+                    summary=_compact(request.user_message or request.feedback or request.assistant_response),
+                    confidence=0.55,
+                    evidence=["auto_detected_correction_or_supersession_marker"],
                 )
             )
         return signals

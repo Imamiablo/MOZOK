@@ -59,3 +59,38 @@ class AgentRecord(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class WorldEventRecord(Base):
+    """Durable World Event Bus V2 record.
+
+    V1 stored events in synthetic agent metadata. V2 gives events their own
+    table so adapters can publish, consume, acknowledge, expire, and audit
+    event history without bloating AgentRecord.metadata_json.
+    """
+
+    __tablename__ = "world_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    world_id: Mapped[str] = mapped_column(String(128), default="default", index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+
+    event_type: Mapped[str] = mapped_column(String(128), default="world_event", index=True)
+    content: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(128), default="external", index=True)
+    channel_hint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    salience: Mapped[float] = mapped_column(Float, default=5.0)
+    reliability: Mapped[float] = mapped_column(Float, default=1.0)
+    visibility: Mapped[str] = mapped_column(String(64), default="local", index=True)
+
+    tags_json: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    consumed_by_agent_ids_json: Mapped[list] = mapped_column(JSON, default=list)
+    acknowledged_by_agent_ids_json: Mapped[list] = mapped_column(JSON, default=list)
+
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+

@@ -277,22 +277,39 @@ MOZOK is a reusable bot-brain backend built around:
 - more advanced relation graph scoring
 - evaluation dataset for ranking quality
 
+## Versions 44-48 runtime/learning upgrade
 
-### 9. Cognitive Field MVP - DONE
+### 44 — Action Execution Layer MVP - DONE
 
-- candidate thoughts
-- attention competition
-- memory resonance
-- goal relevance
-- procedural skill relevance
-- sensory input support
-- conscious-broadcast-style prompt guidance
+- Added adapter-owned action execution queue and audit trail.
+- Added per-agent tool registry with permissions, risk level, approval requirement, retry count, and adapter ownership metadata.
+- Added execution records with permission result, execution status, rollback snapshot, idempotency key, retry metadata, adapter instruction, and result update endpoint.
+- Added Swagger routes for registering action tools, queueing executions, listing executions, and recording adapter results.
 
-### 10. Perception Layer MVP - DONE
+### 45 — Self-Model Chat Integration - DONE
 
-- adapter-neutral event input
-- deterministic event → sensory input compiler
-- direct sensory inputs preserved
-- perception profile for channel weighting/filtering
-- `/perception/compile` endpoint
-- integration with `/chat`, `/debug/context`, and Cognitive Field debug
+- `/chat` can now opt into functional self-model generation for a turn.
+- Self-model can be injected into the final prompt and returned in `ChatResponse`.
+- Action planning can receive the self-model state.
+- Reflection receives self-model/action-plan/action-execution metadata for downstream learning proposals.
+
+### 46 — Reflection Learning V2 - DONE
+
+- Reflection now supports first-class goal update hints.
+- Reflection now supports first-class entity-state update hints.
+- Reflection now supports belief-revision triggers.
+- Change proposals can now apply reviewed goal patches, entity-state patches, and reviewed knowledge-relation additions.
+
+### 47 — Belief Graph V2 - DONE
+
+- Belief revision now tracks claim confidence, source trust, and optional temporal validity.
+- Candidate matches include source trust, temporal status, and suggested confidence deltas.
+- Preview responses include a belief graph summary with claim/memory nodes and relation edges.
+- Reviewed belief-revision proposals can create KnowledgeRelation graph edges for supports/contradicts/supersedes.
+
+### 48 — World Event Bus V2 - DONE
+
+- World events now have a dedicated SQL table instead of synthetic-agent metadata storage.
+- Events support TTL/expiry, consumed-by-agent history, acknowledged-by-agent history, and active/inactive state.
+- Added consume, acknowledge, and expire endpoints.
+- Existing create/search/to-perception endpoints remain available and now use the SQL-backed event bus.

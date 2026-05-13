@@ -102,7 +102,7 @@ class SelfModelService:
         if self.db is None:
             return {"mode": explicit_mode or "assistant", "prompt_guidance": []}
         agent = AgentService(self.db).get_or_create_default_agent(agent_id)
-        return AgentModeService().resolve(agent, explicit_mode=explicit_mode).profile.model_dump(mode="json")
+        return AgentModeService().resolve(agent, agent_mode=explicit_mode).profile.model_dump(mode="json")
 
     def _confidence_from_cognition(self, cognitive_field: dict[str, Any] | None) -> float:
         if not cognitive_field:

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from mozok.cognition.schemas import SensoryInput
 from mozok.perception.schemas import PerceptionEvent, PerceptionProfile
 from mozok.change_proposals.schemas import ApprovalMode
+from mozok.action_planning.schemas import ActionKind, ActionToolSpec
 
 
 class ChatRequest(BaseModel):
@@ -266,6 +267,30 @@ class ChatRequest(BaseModel):
     cognitive_broadcast_top_n: int = Field(default=3, ge=1, le=10)
     cognitive_min_score: float = Field(default=0.0, ge=-100.0, le=100.0)
 
+
+    enable_self_model: bool = Field(
+        default=False,
+        description="If true, build a functional self-model preview for this chat turn and inject it into the prompt/action planning/reflection flow.",
+    )
+    include_self_model_in_prompt: bool = Field(
+        default=True,
+        description="If true and enable_self_model is true, include the self-model prompt block before the LLM response.",
+    )
+    self_model_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    self_model_uncertainty: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    enable_action_planning: bool = Field(
+        default=False,
+        description="If true, plan adapter-owned action intents for this chat turn after cognitive/self-model context is available.",
+    )
+    available_tools: list[ActionToolSpec] = Field(default_factory=list)
+    allowed_action_kinds: list[ActionKind] = Field(default_factory=list)
+    execute_selected_action: bool = Field(
+        default=False,
+        description="If true, queue the selected ready action through Action Execution Layer MVP. External adapters still own real execution.",
+    )
+    action_execution_approval_granted: bool = Field(default=False)
+
     enable_reflection_loop: bool = Field(
         default=False,
         description="If true, run the post-turn reflection loop after the assistant response and create safe change proposals.",
@@ -315,4 +340,7 @@ class ChatResponse(BaseModel):
     dedup_removed_memories_count: int = 0
     context_budget: dict[str, Any] | None = None
     cognitive_field: dict[str, Any] | None = None
+    self_model: dict[str, Any] | None = None
+    action_plan: dict[str, Any] | None = None
+    action_execution: dict[str, Any] | None = None
     reflection_report: dict[str, Any] | None = None

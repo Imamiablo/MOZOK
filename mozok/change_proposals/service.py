@@ -12,6 +12,12 @@ from mozok.db.models import AgentRecord
 from mozok.memory.service import MemoryService
 from mozok.schemas.memory import MemoryCreate
 from mozok.schemas.procedural_skills import ProceduralSkillUsageCreate
+from mozok.schemas.goals import AgentGoalPatch
+from mozok.schemas.entity_state import EntityStatePatch
+from mozok.schemas.knowledge_relations import KnowledgeRelationUpsert
+from mozok.goals.service import GoalService
+from mozok.entity_state.service import EntityStateService
+from mozok.knowledge_relations.service import KnowledgeRelationService
 from mozok.procedural_skills.service import ProceduralSkillService
 from mozok.change_proposals.schemas import (
     ChangeOperation,
@@ -285,6 +291,34 @@ class ChangeProposalService:
             payload.setdefault("emotional_weight", 0.0)
             memory = self.memory_service.add_memory(MemoryCreate(**payload))
             return True, f"Created memory {memory.id}."
+
+        if operation.operation_type == "update_goal":
+            payload = dict(operation.payload or {})
+            goal_id = payload.pop("goal_id", None) or operation.target_id
+            patch = payload.pop("patch", payload)
+            if goal_id is None:
+                return False, "Missing goal_id for goal update."
+            record = GoalService(self.db).patch(int(goal_id), AgentGoalPatch(**dict(patch or {})))
+            if record is None:
+                return False, f"Goal {goal_id} was not found."
+            return True, f"Updated goal {goal_id}."
+
+        if operation.operation_type == "update_entity_state":
+            payload = dict(operation.payload or {})
+            state_id = payload.pop("state_id", None) or operation.target_id
+            patch = payload.pop("patch", payload)
+            if state_id is None:
+                return False, "Missing state_id for entity-state update."
+            record = EntityStateService(self.db).patch(int(state_id), EntityStatePatch(**dict(patch or {})))
+            if record is None:
+                return False, f"Entity state {state_id} was not found."
+            return True, f"Updated entity state {state_id}."
+
+        if operation.operation_type == "add_knowledge_relation":
+            payload = dict(operation.payload or {})
+            payload.setdefault("agent_id", agent.id)
+            relation = KnowledgeRelationService(self.db).upsert(KnowledgeRelationUpsert(**payload))
+            return True, f"Upserted knowledge relation {relation.id}."
 
         if operation.operation_type == "record_skill_usage_result":
             payload = dict(operation.payload or {})

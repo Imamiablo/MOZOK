@@ -13,6 +13,12 @@ from mozok.schemas.memory import MemoryCreate
 from mozok.perception.schemas import PerceptionEvent, PerceptionProfile
 from mozok.reflection.schemas import ReflectionRequest
 from mozok.reflection.service import ReflectionService
+from mozok.self_model.schemas import SelfModelRequest
+from mozok.self_model.service import SelfModelService
+from mozok.action_planning.schemas import ActionPlanRequest
+from mozok.action_planning.service import ActionPlanningService
+from mozok.action_execution.schemas import ActionExecutionRequest
+from mozok.action_execution.service import ActionExecutionService
 
 
 def get_memory_service(db: Session) -> MemoryService:
@@ -64,6 +70,15 @@ class BotCore:
         cognitive_max_candidates: int = 12,
         cognitive_broadcast_top_n: int = 3,
         cognitive_min_score: float = 0.0,
+        enable_self_model: bool = False,
+        include_self_model_in_prompt: bool = True,
+        self_model_confidence: float | None = None,
+        self_model_uncertainty: float | None = None,
+        enable_action_planning: bool = False,
+        available_tools: list | None = None,
+        allowed_action_kinds: list | None = None,
+        execute_selected_action: bool = False,
+        action_execution_approval_granted: bool = False,
         enable_reflection_loop: bool = False,
         reflection_approval_mode: str = "manual_review",
         reflection_auto_apply: bool = False,
@@ -162,6 +177,70 @@ class BotCore:
             entity_state_entity_id=entity_state_entity_id,
         )
 
+        # Self-Model Chat Integration (V45): build a functional operational
+        # state after perception/cognition, then let it influence the final
+        # prompt, action planning, and reflection metadata.
+        self_model_response = None
+        if (
+            apply_agent_mode_defaults
+            and context.agent_mode_profile
+            and context.agent_mode_profile.enable_reflection_by_default
+            and context.agent_mode_resolution.get("source") != "default"
+        ):
+            enable_self_model = True
+
+        if enable_self_model:
+            perception_summary = ""
+            if context.perception_report:
+                perception_summary = (
+                    f"{context.perception_report.output_sensory_input_count} attended sensory input(s): "
+                    f"{', '.join(context.perception_report.channels)}"
+                )
+            self_model_response = SelfModelService(self.db).preview(
+                agent_id,
+                SelfModelRequest(
+                    agent_mode=agent_mode,
+                    current_task=message,
+                    user_message=message,
+                    cognitive_field=context.cognitive_field.model_dump() if context.cognitive_field else None,
+                    perception_summary=perception_summary,
+                    confidence=self_model_confidence,
+                    uncertainty=self_model_uncertainty,
+                    metadata={"source": "chat"},
+                ),
+            )
+            context.self_model = self_model_response.state.model_dump(mode="json")
+            if include_self_model_in_prompt:
+                context.self_model_prompt_block = self_model_response.prompt_block
+
+        action_plan_response = None
+        action_execution_response = None
+        if enable_action_planning:
+            action_plan_response = ActionPlanningService(self.db).plan(
+                agent_id,
+                ActionPlanRequest(
+                    user_message=message,
+                    agent_mode=agent_mode,
+                    cognitive_field=context.cognitive_field.model_dump() if context.cognitive_field else None,
+                    self_model=context.self_model,
+                    sensory_inputs=[item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item) for item in (sensory_inputs or [])],
+                    available_tools=available_tools or [],
+                    allowed_action_kinds=allowed_action_kinds or [],
+                    metadata={"source": "chat"},
+                ),
+            )
+            context.action_plan = action_plan_response.model_dump(mode="json")
+            if execute_selected_action and action_plan_response.selected_action is not None:
+                action_execution_response = ActionExecutionService(self.db).execute(
+                    agent_id,
+                    ActionExecutionRequest(
+                        intent=action_plan_response.selected_action,
+                        approval_granted=action_execution_approval_granted,
+                        requested_by="chat",
+                        store_execution=True,
+                    ),
+                )
+
         system_prompt = context.to_system_prompt()
         response_text = self.llm.chat(system_prompt=system_prompt, user_message=message)
 
@@ -205,6 +284,11 @@ class BotCore:
                     approval_mode=reflection_approval_mode,
                     auto_apply=reflection_auto_apply,
                     store_proposals=reflection_store_proposals,
+                    metadata={
+                        "self_model": context.self_model,
+                        "action_plan": context.action_plan,
+                        "action_execution": action_execution_response.execution.model_dump(mode="json") if action_execution_response else None,
+                    },
                 )
             )
 
@@ -258,5 +342,8 @@ class BotCore:
             dedup_removed_memories_count=context.dedup_removed_count(),
             context_budget=context.context_budget.to_dict() if context.context_budget else None,
             cognitive_field=context.cognitive_field.model_dump() if context.cognitive_field else None,
+            self_model=self_model_response.model_dump(mode="json") if self_model_response else None,
+            action_plan=action_plan_response.model_dump(mode="json") if action_plan_response else None,
+            action_execution=action_execution_response.model_dump(mode="json") if action_execution_response else None,
             reflection_report=reflection_report.model_dump() if reflection_report else None,
         )
