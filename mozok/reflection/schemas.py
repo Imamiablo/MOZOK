@@ -30,13 +30,6 @@ class ReflectionBeliefRevisionTrigger(BaseModel):
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    goal_update_hints: list[ReflectionGoalUpdateHint] = Field(default_factory=list)
-    entity_state_update_hints: list[ReflectionEntityStateUpdateHint] = Field(default_factory=list)
-    belief_revision_triggers: list[ReflectionBeliefRevisionTrigger] = Field(default_factory=list)
-    auto_detect_belief_revision: bool = Field(
-        default=False,
-        description="If true, create a review proposal when the turn appears to correct or supersede an existing belief.",
-    )
 
 
 class ReflectionRequest(BaseModel):

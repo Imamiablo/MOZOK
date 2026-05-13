@@ -77,7 +77,10 @@ class ReflectionService:
                     request.agent_id,
                     ChangeProposalAutoPolicyRequest(
                         approval_mode=request.approval_mode,
-                        proposal_type="reflection",
+                        # Apply all freshly generated reflection proposal families, not only the legacy
+                        # generic ``reflection`` proposal type. This keeps V46 first-class goal/entity/
+                        # belief proposals eligible for the same safe auto-policy path.
+                        proposal_type=None,
                         dry_run=False,
                     ),
                 )
@@ -197,6 +200,95 @@ class ReflectionService:
                                     "used_goal_ids": request.used_goal_ids,
                                     **request.metadata,
                                 },
+                            },
+                        )
+                    ],
+                )
+            )
+
+        for hint in request.goal_update_hints:
+            result.append(
+                ChangeProposalCreate(
+                    proposal_type="reflection_goal_update",
+                    summary=f"Review reflected goal update for goal_id={hint.goal_id}",
+                    rationale=hint.rationale or "Reflection detected a goal update hint that should be reviewed before it changes durable goal state.",
+                    risk_level="medium",
+                    approval_mode=request.approval_mode,
+                    source="reflection_loop",
+                    store=request.store_proposals,
+                    metadata={"source_signal": "goal_update_hint", "goal_id": hint.goal_id},
+                    operations=[
+                        ChangeOperation(
+                            operation_type="update_goal",
+                            target_type="goal",
+                            target_id=str(hint.goal_id) if hint.goal_id is not None else None,
+                            summary="Apply reviewed goal patch",
+                            risk_level="medium",
+                            payload={"goal_id": hint.goal_id, "patch": dict(hint.patch or {})},
+                        )
+                    ],
+                )
+            )
+
+        for hint in request.entity_state_update_hints:
+            result.append(
+                ChangeProposalCreate(
+                    proposal_type="reflection_entity_state_update",
+                    summary=f"Review reflected entity-state update for state_id={hint.state_id}",
+                    rationale=hint.rationale or "Reflection detected an entity-state update hint that should be reviewed before it changes durable entity state.",
+                    risk_level="medium",
+                    approval_mode=request.approval_mode,
+                    source="reflection_loop",
+                    store=request.store_proposals,
+                    metadata={"source_signal": "entity_state_update_hint", "state_id": hint.state_id},
+                    operations=[
+                        ChangeOperation(
+                            operation_type="update_entity_state",
+                            target_type="entity_state",
+                            target_id=str(hint.state_id) if hint.state_id is not None else None,
+                            summary="Apply reviewed entity-state patch",
+                            risk_level="medium",
+                            payload={"state_id": hint.state_id, "patch": dict(hint.patch or {})},
+                        )
+                    ],
+                )
+            )
+
+        if request.belief_revision_triggers:
+            trigger_payloads = [
+                {
+                    "claim_content": trigger.claim_content,
+                    "source": trigger.source,
+                    "confidence": trigger.confidence,
+                    "world_id": trigger.world_id,
+                    "tags": list(trigger.tags or []),
+                    "metadata": dict(trigger.metadata or {}),
+                }
+                for trigger in request.belief_revision_triggers
+            ]
+            result.append(
+                ChangeProposalCreate(
+                    proposal_type="reflection_belief_revision",
+                    summary="Review reflected belief revision trigger",
+                    rationale="Reflection detected a possible correction or supersession. Keep it reviewable before belief graph state is updated.",
+                    risk_level="medium",
+                    approval_mode=request.approval_mode,
+                    source="reflection_loop",
+                    store=request.store_proposals,
+                    metadata={"source_signal": "belief_revision_trigger", "trigger_count": len(trigger_payloads)},
+                    operations=[
+                        ChangeOperation(
+                            operation_type="update_agent_metadata",
+                            target_type="agent",
+                            summary="Queue belief revision trigger metadata for reviewed follow-up",
+                            risk_level="medium",
+                            payload={
+                                "metadata_patch": {
+                                    "belief_revision": {
+                                        "pending_reflection_triggers": trigger_payloads,
+                                        "last_reflection_trigger": trigger_payloads[-1] if trigger_payloads else {},
+                                    }
+                                }
                             },
                         )
                     ],

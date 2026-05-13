@@ -182,6 +182,13 @@ def test_reflection_learning_v2_creates_first_class_goal_entity_and_belief_propo
     assert "reflection_entity_state_update" in proposal_types
     assert "reflection_belief_revision" in proposal_types
 
+    goal_proposal = next(proposal for proposal in response.proposals if proposal.proposal_type == "reflection_goal_update")
+    entity_proposal = next(proposal for proposal in response.proposals if proposal.proposal_type == "reflection_entity_state_update")
+    belief_proposal = next(proposal for proposal in response.proposals if proposal.proposal_type == "reflection_belief_revision")
+    assert goal_proposal.operations[0].operation_type == "update_goal"
+    assert entity_proposal.operations[0].operation_type == "update_entity_state"
+    assert belief_proposal.operations[0].operation_type == "update_agent_metadata"
+
 
 def test_belief_graph_v2_adds_temporal_confidence_and_relation_payloads():
     db = make_db()
