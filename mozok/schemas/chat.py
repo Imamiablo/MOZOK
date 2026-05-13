@@ -22,6 +22,20 @@ class ChatRequest(BaseModel):
         description="How many recent short-term messages to include in the prompt. Use 0 to disable.",
     )
 
+    agent_mode: str | None = Field(
+        default=None,
+        description="Optional operating mode override, e.g. assistant, roleplay_character, simulacra_npc, narrator, world_director, tool_agent. Null resolves from agent metadata or assistant default.",
+        examples=["simulacra_npc"],
+    )
+    apply_agent_mode_defaults: bool = Field(
+        default=True,
+        description="If true, resolved mode defaults can influence narrator-lore access, entity-state filtering, and cognitive/perception/reflection defaults.",
+    )
+    agent_mode_profile_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional one-request overrides for the resolved AgentModeProfile. Prefer scenario metadata for persistent defaults.",
+    )
+
 
     include_goals: bool = Field(
         default=True,
@@ -279,6 +293,8 @@ class ChatResponse(BaseModel):
     agent_id: str
     session_id: str
     response: str
+    agent_mode: dict[str, Any] | None = None
+    agent_mode_resolution: dict[str, Any] | None = None
     used_memory_ids: list[int]
     used_short_term_messages_count: int = 0
     used_goal_ids: list[int] = Field(default_factory=list)

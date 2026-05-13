@@ -21,6 +21,10 @@ from mozok.api.cognition_routes import router as cognition_router
 from mozok.api.perception_routes import router as perception_router
 from mozok.api.change_proposal_routes import router as change_proposal_router
 from mozok.api.reflection_routes import router as reflection_router
+from mozok.api.agent_mode_routes import router as agent_mode_router
+from mozok.api.action_planning_routes import router as action_planning_router
+from mozok.api.self_model_routes import router as self_model_router
+from mozok.api.belief_revision_routes import router as belief_revision_router
 from mozok.schemas.memory import (
     MemoryCreate,
     MemoryForgetRequest,
@@ -51,6 +55,10 @@ app.include_router(cognition_router)
 app.include_router(perception_router)
 app.include_router(change_proposal_router)
 app.include_router(reflection_router)
+app.include_router(agent_mode_router)
+app.include_router(action_planning_router)
+app.include_router(self_model_router)
+app.include_router(belief_revision_router)
 
 @app.get("/")
 def root():
@@ -266,6 +274,9 @@ def debug_context(data: ContextDebugRequest, db: Session = Depends(get_db)):
         cognitive_max_candidates=data.cognitive_max_candidates,
         cognitive_broadcast_top_n=data.cognitive_broadcast_top_n,
         cognitive_min_score=data.cognitive_min_score,
+        agent_mode=data.agent_mode,
+        apply_agent_mode_defaults=data.apply_agent_mode_defaults,
+        agent_mode_profile_overrides=data.agent_mode_profile_overrides,
         include_goals=data.include_goals,
         goal_limit=data.goal_limit,
         goal_status=data.goal_status,
@@ -321,6 +332,9 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             compression_enabled=data.compression_enabled,
             short_term_summarization_enabled=data.short_term_summarization_enabled,
             budget_aware_graph_expansion=data.budget_aware_graph_expansion,
+            agent_mode=data.agent_mode,
+            apply_agent_mode_defaults=data.apply_agent_mode_defaults,
+            agent_mode_profile_overrides=data.agent_mode_profile_overrides,
             enable_cognitive_field=data.enable_cognitive_field,
             sensory_inputs=data.sensory_inputs,
             perception_events=data.perception_events,

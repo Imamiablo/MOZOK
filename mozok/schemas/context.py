@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from mozok.cognition.schemas import SensoryInput
@@ -28,6 +30,20 @@ class ContextDebugRequest(BaseModel):
     semantic_limit: int = Field(default=6, ge=0, le=50)
     episodic_limit: int = Field(default=4, ge=0, le=50)
     raw_limit: int = Field(default=0, ge=0, le=50)
+
+    agent_mode: str | None = Field(
+        default=None,
+        description="Optional operating mode override, e.g. assistant, roleplay_character, simulacra_npc, narrator, world_director, tool_agent. Null resolves from agent metadata or assistant default.",
+        examples=["narrator"],
+    )
+    apply_agent_mode_defaults: bool = Field(
+        default=True,
+        description="If true, resolved mode defaults can influence narrator-lore access, entity-state filtering, and cognitive/perception/reflection defaults.",
+    )
+    agent_mode_profile_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional one-request overrides for the resolved AgentModeProfile. Prefer scenario metadata for persistent defaults.",
+    )
 
 
     include_goals: bool = Field(

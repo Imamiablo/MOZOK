@@ -24,6 +24,8 @@ from mozok.cognition.schemas import CognitiveFieldReport, SensoryInput
 from mozok.cognition.service import CognitiveFieldService
 from mozok.perception.schemas import PerceptionEvent, PerceptionProfile, PerceptionReport
 from mozok.perception.service import PerceptionCompiler
+from mozok.agent_modes.schemas import AgentModeProfile
+from mozok.agent_modes.service import AgentModeService
 from mozok.schemas.memory import MemorySearchResult
 
 def _memory_reranking_final_score(memory: MemorySearchResult) -> float | None:
@@ -106,6 +108,8 @@ class ContextPackage:
     budget_aware_graph_expansion: dict = field(default_factory=dict)
     cognitive_field: CognitiveFieldReport | None = None
     perception_report: PerceptionReport | None = None
+    agent_mode_profile: AgentModeProfile | None = None
+    agent_mode_resolution: dict = field(default_factory=dict)
 
     # Debug-only snapshots used to explain the context assembly pipeline.
     # These are copies of earlier stages so later budget trimming can mutate the
@@ -331,6 +335,8 @@ class ContextPackage:
                 "memory_reranking": self.memory_reranking_report(stage="final"),
                 "cognitive_field": self.cognitive_field.model_dump() if self.cognitive_field else None,
                 "perception": self.perception_report.model_dump() if self.perception_report else None,
+            "agent_mode": self.agent_mode_profile.model_dump() if self.agent_mode_profile else None,
+            "agent_mode_resolution": self.agent_mode_resolution,
                 "notes": self._final_prompt_notes(final_counts, over_budget_after_trimming),
             },
         ]
@@ -462,6 +468,8 @@ class ContextPackage:
             "context_budget": self.context_budget.to_dict() if self.context_budget else None,
             "cognitive_field": self.cognitive_field.model_dump() if self.cognitive_field else None,
             "perception": self.perception_report.model_dump() if self.perception_report else None,
+            "agent_mode": self.agent_mode_profile.model_dump() if self.agent_mode_profile else None,
+            "agent_mode_resolution": self.agent_mode_resolution,
             "memory_reranking": self.memory_reranking_report(stage="final"),
             "pipeline_steps": self.pipeline_steps(),
             "sections": {
@@ -679,6 +687,9 @@ class ContextPackage:
         if profile_text:
             sections.append(f"Agent profile:\n{profile_text}")
 
+        if self.agent_mode_profile:
+            sections.append(self._format_agent_mode_for_prompt())
+
         if self.goal_items:
             sections.append(
                 "Goals / plans currently active for this agent:\n"
@@ -784,6 +795,33 @@ class ContextPackage:
         )
 
         return "\n\n---\n\n".join(section for section in sections if section.strip())
+
+
+    def _format_agent_mode_for_prompt(self) -> str:
+        """Render operating-mode guidance for the LLM.
+
+        Agent mode is not personality. It is the runtime policy for what kind
+        of agent is being run: assistant, roleplay character, simulacra NPC,
+        narrator, world director, or tool agent.
+        """
+
+        if not self.agent_mode_profile:
+            return ""
+
+        profile = self.agent_mode_profile
+        lines = [
+            "Agent operating mode:",
+            f"- Mode: {profile.mode} ({profile.label or profile.mode})",
+        ]
+        if profile.description:
+            lines.append(f"- Description: {profile.description}")
+        if profile.prompt_guidance:
+            lines.append("- Mode guidance:")
+            lines.extend(f"  - {item}" for item in profile.prompt_guidance)
+        if profile.allowed_entity_state_kinds is not None:
+            lines.append("- Allowed entity-state kinds: " + ", ".join(profile.allowed_entity_state_kinds))
+        lines.append(f"- Narrator-only lore allowed by this mode: {profile.allow_narrator_only_lore}")
+        return "\n".join(lines)
 
     def _format_cognitive_field_for_prompt(self) -> str:
         """Render the optional Cognitive Field broadcast as soft prompt guidance.
@@ -935,10 +973,26 @@ class ContextBuilder:
         entity_state_limit: int = 10,
         entity_state_kind: str | None = None,
         entity_state_entity_id: str | None = None,
+        agent_mode: str | None = None,
+        apply_agent_mode_defaults: bool = True,
+        agent_mode_profile_overrides: dict | None = None,
     ) -> ContextPackage:
         """Collect profile + short-term + long-term memory for one LLM turn."""
 
         agent_id = agent.id
+        mode_resolution = AgentModeService().resolve(
+            agent,
+            agent_mode=agent_mode,
+            overrides=agent_mode_profile_overrides or {},
+        )
+        mode_profile = mode_resolution.profile
+        mode_defaults_active = bool(apply_agent_mode_defaults and mode_resolution.source != "default")
+        if mode_defaults_active:
+            include_narrator_only_lore = bool(include_narrator_only_lore or mode_profile.allow_narrator_only_lore)
+            enable_cognitive_field = bool(enable_cognitive_field or mode_profile.enable_cognitive_field_by_default)
+            if perception_events and mode_profile.enable_perception_by_default:
+                enable_cognitive_field = True
+
         budget_policy = ContextBudgetPolicy(
             enforce=enforce_token_budget,
             max_prompt_tokens=max_prompt_tokens,
@@ -1033,6 +1087,8 @@ class ContextBuilder:
                 limit=entity_state_limit,
             )
             entity_state_items = reads_from_records(entity_state_records)
+            if mode_defaults_active:
+                entity_state_items = AgentModeService().filter_entity_states(mode_profile, entity_state_items)
 
 
         procedural_skill_items: list[AgentProceduralSkillRead] = []
@@ -1216,6 +1272,8 @@ class ContextBuilder:
             post_dedup_knowledge_relation_items=list(knowledge_relation_items),
             post_dedup_lorebook_items=list(lorebook_items),
             post_dedup_entity_state_items=list(entity_state_items),
+            agent_mode_profile=mode_profile,
+            agent_mode_resolution=mode_resolution.model_dump(),
         )
 
         compiled_sensory_inputs = list(sensory_inputs or [])

@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+from mozok.agent_modes.schemas import AgentModeProfile
+
+
+BUILTIN_AGENT_MODE_PROFILES: dict[str, AgentModeProfile] = {
+    "assistant": AgentModeProfile(
+        mode="assistant",
+        label="Assistant",
+        description="Task-focused helper mode for assistants and general chatbots.",
+        allow_narrator_only_lore=False,
+        allowed_entity_state_kinds=[
+            "assistant_user_profile",
+            "task_context",
+            "user_preference",
+            "narrative_entity",
+            "quest_relevance",
+        ],
+        enable_cognitive_field_by_default=False,
+        enable_perception_by_default=False,
+        enable_reflection_by_default=False,
+        prompt_guidance=[
+            "Prioritise the user's task, explicit instructions, and useful answers.",
+            "Do not invent social emotions such as fear, resentment, or romantic attachment unless the application explicitly models them.",
+            "Use user-profile state only when it is relevant and safe for the current task.",
+        ],
+        permissions={
+            "relationship_states": "limited",
+            "narrator_lore": False,
+            "autonomous_ticks": False,
+        },
+    ),
+    "roleplay_character": AgentModeProfile(
+        mode="roleplay_character",
+        label="Roleplay character",
+        description="Persona-consistent dialogue character mode.",
+        allow_narrator_only_lore=False,
+        allowed_entity_state_kinds=[
+            "social_relationship",
+            "narrative_entity",
+            "faction_reputation",
+            "quest_relevance",
+            "assistant_user_profile",
+        ],
+        enable_cognitive_field_by_default=True,
+        enable_perception_by_default=True,
+        enable_reflection_by_default=True,
+        prompt_guidance=[
+            "Preserve persona, knowledge boundaries, and in-world consistency.",
+            "Do not reveal hidden or narrator-only lore unless it appears in the available context.",
+            "Use relationship and emotional states as character context, not as global truth.",
+        ],
+        permissions={
+            "relationship_states": "enabled",
+            "narrator_lore": False,
+            "autonomous_ticks": False,
+        },
+    ),
+    "simulacra_npc": AgentModeProfile(
+        mode="simulacra_npc",
+        label="Simulacra NPC",
+        description="World-bound NPC mode for autonomous or semi-autonomous simulation agents.",
+        allow_narrator_only_lore=False,
+        allowed_entity_state_kinds=[
+            "social_relationship",
+            "narrative_entity",
+            "faction_reputation",
+            "quest_relevance",
+            "location_state",
+            "schedule_state",
+        ],
+        enable_cognitive_field_by_default=True,
+        enable_perception_by_default=True,
+        enable_reflection_by_default=True,
+        can_autonomously_tick=True,
+        can_execute_actions=True,
+        prompt_guidance=[
+            "Treat the agent as a local world participant with limited perception and limited knowledge.",
+            "Use goals, perception, relationships, and procedural skills to guide intent.",
+            "Do not use omniscient narrator knowledge unless the scenario explicitly grants it to this NPC.",
+        ],
+        permissions={
+            "relationship_states": "enabled",
+            "narrator_lore": False,
+            "autonomous_ticks": True,
+            "world_actions": True,
+        },
+    ),
+    "narrator": AgentModeProfile(
+        mode="narrator",
+        label="Narrator",
+        description="Story narrator / GM mode with broader world visibility.",
+        allow_narrator_only_lore=True,
+        allowed_entity_state_kinds=[
+            "narrative_entity",
+            "quest_relevance",
+            "faction_reputation",
+            "scene_state",
+            "pacing_state",
+        ],
+        enable_cognitive_field_by_default=True,
+        enable_perception_by_default=False,
+        enable_reflection_by_default=True,
+        can_execute_actions=True,
+        prompt_guidance=[
+            "Act as a narrator or story engine, not as an in-world NPC unless instructed.",
+            "You may use narrator-only lore when shaping narration, but reveal it to characters only when appropriate.",
+            "Manage scene clarity, pacing, stakes, and continuity.",
+        ],
+        permissions={
+            "relationship_states": "not_applicable_by_default",
+            "narrator_lore": True,
+            "world_actions": True,
+        },
+    ),
+    "world_director": AgentModeProfile(
+        mode="world_director",
+        label="World director",
+        description="Backend simulation/director mode for world events and scenario orchestration.",
+        allow_narrator_only_lore=True,
+        allowed_entity_state_kinds=None,
+        enable_cognitive_field_by_default=True,
+        enable_perception_by_default=False,
+        enable_reflection_by_default=True,
+        can_execute_actions=True,
+        can_autonomously_tick=True,
+        prompt_guidance=[
+            "Prefer structured world-state reasoning over character dialogue.",
+            "Coordinate events, pacing, and scenario consistency.",
+            "Do not speak as a single character unless explicitly requested.",
+        ],
+        permissions={
+            "narrator_lore": True,
+            "world_actions": True,
+            "autonomous_ticks": True,
+        },
+    ),
+    "tool_agent": AgentModeProfile(
+        mode="tool_agent",
+        label="Tool agent",
+        description="Structured task/tool execution mode.",
+        allow_narrator_only_lore=False,
+        allowed_entity_state_kinds=["task_context", "assistant_user_profile", "tool_state"],
+        enable_cognitive_field_by_default=False,
+        enable_perception_by_default=False,
+        enable_reflection_by_default=True,
+        can_execute_actions=True,
+        prompt_guidance=[
+            "Prefer concise structured reasoning and reliable task execution.",
+            "Avoid roleplay unless the caller explicitly asks for it.",
+            "Use tool/action plans only when the application layer permits them.",
+        ],
+        permissions={
+            "relationship_states": "disabled",
+            "tool_actions": True,
+            "narrator_lore": False,
+        },
+    ),
+}
+
+DEFAULT_AGENT_MODE = "assistant"

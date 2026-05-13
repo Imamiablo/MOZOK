@@ -44,6 +44,9 @@ class BotCore:
         message: str,
         session_id: str = "default",
         short_term_limit: int = 20,
+        agent_mode: str | None = None,
+        apply_agent_mode_defaults: bool = True,
+        agent_mode_profile_overrides: dict | None = None,
         enforce_token_budget: bool = True,
         max_prompt_tokens: int = 6000,
         reserved_response_tokens: int = 1000,
@@ -106,6 +109,9 @@ class BotCore:
             user_message=message,
             session_id=session_id,
             short_term_limit=short_term_limit,
+            agent_mode=agent_mode,
+            apply_agent_mode_defaults=apply_agent_mode_defaults,
+            agent_mode_profile_overrides=agent_mode_profile_overrides or {},
             enforce_token_budget=enforce_token_budget,
             max_prompt_tokens=max_prompt_tokens,
             reserved_response_tokens=reserved_response_tokens,
@@ -173,6 +179,14 @@ class BotCore:
             content=response_text,
         )
 
+        if (
+            apply_agent_mode_defaults
+            and context.agent_mode_profile
+            and context.agent_mode_profile.enable_reflection_by_default
+            and context.agent_mode_resolution.get("source") != "default"
+        ):
+            enable_reflection_loop = True
+
         reflection_report = None
         if enable_reflection_loop:
             reflection_report = ReflectionService(db=self.db, memory_service=self.memory).reflect(
@@ -222,6 +236,8 @@ class BotCore:
             agent_id=agent_id,
             session_id=session_id,
             response=response_text,
+            agent_mode=context.agent_mode_profile.model_dump() if context.agent_mode_profile else None,
+            agent_mode_resolution=context.agent_mode_resolution,
             used_memory_ids=context.used_memory_ids(),
             used_short_term_messages_count=context.used_short_term_count(),
             used_goal_ids=context.used_goal_ids(),
