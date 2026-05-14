@@ -1,0 +1,132 @@
+{
+  "scenario_id": "island_camp_demo",
+  "title": "Island Camp — Night 1",
+  "map": {
+    "rows": [
+      ",,,,,,,,,,,,,,,,",
+      ",....TTTT....~~,",
+      ",..T....T.....~,",
+      ",..T.C..T..R..~,",
+      ",....F.....T..~,",
+      ",..S.....T....,",
+      ",.....@....T..,",
+      ",..T.....W....,",
+      ",..T..T.......",
+      ",.....T..V....",
+      ",,,....###....",
+      ",,,,,,,,,,,,,,,"
+    ]
+  },
+  "player": { "position": [6, 6] },
+  "agents": [
+    {
+      "id": "alice",
+      "name": "Alice",
+      "role": "curious survivor",
+      "position": [5, 5],
+      "avatar_folder": "alice",
+      "personality": "Curious, anxious, clever, tempted by mysteries.",
+      "emotion": "curious",
+      "current_goal": "understand_the_cave",
+      "needs": { "hunger": 35, "thirst": 42, "fatigue": 25, "stress": 38, "social": 52, "curiosity": 74 },
+      "social_to_player": { "trust": 54, "fear": 10, "affinity": 45, "resentment": 8 },
+      "memory_snippets": ["Alice heard clicking from the cave after sunset.", "Alice thinks the island is arranged too deliberately."]
+    },
+    {
+      "id": "boris",
+      "name": "Boris",
+      "role": "practical survivor",
+      "position": [8, 4],
+      "avatar_folder": "boris",
+      "personality": "Practical, suspicious, protective of supplies.",
+      "emotion": "suspicious",
+      "current_goal": "protect_supplies",
+      "needs": { "hunger": 54, "thirst": 30, "fatigue": 20, "stress": 24, "social": 25, "curiosity": 20 },
+      "social_to_player": { "trust": 42, "fear": 8, "affinity": 25, "resentment": 18 },
+      "memory_snippets": ["Boris counted four rations in the crate before dusk.", "Boris distrusts anyone who takes supplies without asking."]
+    },
+    {
+      "id": "mira",
+      "name": "Mira",
+      "role": "frightened medic",
+      "position": [4, 7],
+      "avatar_folder": "mira",
+      "personality": "Kind, observant, easily frightened, tries to keep people together.",
+      "emotion": "afraid",
+      "current_goal": "keep_group_together",
+      "needs": { "hunger": 28, "thirst": 58, "fatigue": 48, "stress": 62, "social": 70, "curiosity": 22 },
+      "social_to_player": { "trust": 61, "fear": 18, "affinity": 54, "resentment": 4 },
+      "memory_snippets": ["Mira saw footprints near the spring that did not match anyone in camp.", "Mira wants people to stay near the fire after dark."]
+    }
+  ],
+  "objects": [
+    {
+      "id": "campfire_01",
+      "name": "Campfire",
+      "kind": "campfire",
+      "position": [5, 3],
+      "interactions": ["light", "rest", "inspect"],
+      "tags": ["camp", "safety", "fire"],
+      "state": { "lit": true }
+    },
+    {
+      "id": "food_crate_01",
+      "name": "Food Crate",
+      "kind": "food_crate",
+      "position": [5, 4],
+      "interactions": ["take_food", "inspect"],
+      "tags": ["food", "supplies"],
+      "state": { "food": 4 }
+    },
+    {
+      "id": "shelter_01",
+      "name": "Palm Shelter",
+      "kind": "shelter",
+      "position": [3, 5],
+      "interactions": ["rest", "inspect"],
+      "tags": ["shelter", "safety", "rest"],
+      "state": { "condition": 65 }
+    },
+    {
+      "id": "spring_01",
+      "name": "Fresh Water Spring",
+      "kind": "water_source",
+      "position": [8, 7],
+      "interactions": ["drink", "inspect"],
+      "tags": ["water", "survival"],
+      "state": { "water_amount": 100 }
+    },
+    {
+      "id": "radio_01",
+      "name": "Broken Radio",
+      "kind": "broken_radio",
+      "position": [11, 3],
+      "interactions": ["inspect", "repair"],
+      "tags": ["radio", "mystery", "tool"],
+      "state": { "inspected": false, "repair_progress": 0 }
+    },
+    {
+      "id": "cave_01",
+      "name": "Cave Entrance",
+      "kind": "cave_entrance",
+      "position": [9, 9],
+      "interactions": ["inspect", "enter"],
+      "tags": ["cave", "danger", "mystery"],
+      "state": { "entered": false, "noise_level": 2 }
+    }
+  ],
+  "opening_events": [
+    {
+      "event_type": "opening_scene",
+      "content": "Night falls over the island camp. The cave clicks twice in the distance.",
+      "salience": 9,
+      "tags": ["opening", "cave", "mystery"]
+    },
+    {
+      "event_type": "resource_pressure",
+      "content": "There are only four rations left in the food crate.",
+      "salience": 7,
+      "tags": ["food", "survival", "conflict"]
+    }
+  ]
+}

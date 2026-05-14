@@ -1,0 +1,20 @@
+{
+  "pack_id": "island_sandbox_demo_eval_pack",
+  "title": "Island Sandbox Demo Evaluation Pack",
+  "cases": [
+    {
+      "case_id": "boris_food_conflict",
+      "agent_id": "boris",
+      "user_message": "The player took the last ration from the food crate without asking.",
+      "required_prompt_text": ["supplies", "Boris"],
+      "forbidden_prompt_text": ["narrator_only"]
+    },
+    {
+      "case_id": "alice_cave_curiosity",
+      "agent_id": "alice",
+      "user_message": "The cave clicked twice again after sunset.",
+      "required_prompt_text": ["cave", "Alice"],
+      "forbidden_prompt_text": ["secret_admin_note"]
+    }
+  ]
+}

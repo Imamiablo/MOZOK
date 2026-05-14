@@ -1,0 +1,277 @@
+from __future__ import annotations
+
+import os
+from dataclasses import asdict
+from typing import Any, Protocol
+
+import requests
+
+from mozok_game.engine.director import apply_api_cognitive_trace
+from mozok_game.engine.models import Agent, AgentIntent, WorldEvent, WorldObject
+from mozok_game.engine.world_state import WorldState
+
+
+class BrainClient(Protocol):
+    mode_name: str
+    last_status: str
+
+    def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
+        ...
+
+
+class OfflineMozokBrain:
+    """Deterministic stand-in for MOZOK so the prototype is playable immediately."""
+
+    mode_name = "offline"
+    last_status = "OFFLINE brain active"
+
+    def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
+        urgent, value = agent.needs.most_urgent
+        if agent.needs.thirst > 65:
+            target = world.find_object_with_tag("water")
+            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion=agent.emotion, rationale="OFFLINE: thirst is high")
+        if agent.needs.hunger > 70:
+            target = world.find_object_with_tag("food")
+            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion=agent.emotion, rationale="OFFLINE: hunger is high")
+        if agent.needs.fatigue > 78:
+            target = world.find_object_with_tag("shelter") or world.object_by_kind("campfire")
+            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion="tired", rationale="OFFLINE: fatigue is high")
+        if agent.needs.stress > 72:
+            target = world.object_by_kind("campfire")
+            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion="afraid", dialogue=f"{agent.name}: I want to stay near the fire.", rationale="OFFLINE: stress is high")
+        cave_event = any("cave" in event.tags for event in recent_events[-6:])
+        if cave_event and agent.needs.curiosity > 55 and agent.social_to_player.fear < 55:
+            target = world.object_by_kind("cave_entrance")
+            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion="curious", dialogue=f"{agent.name}: That cave keeps bothering me. I might check it.", rationale="OFFLINE: cave event plus curiosity")
+        if agent.position.manhattan(world.player.position) <= 2 and agent.needs.social > 50:
+            return AgentIntent(agent.id, "speak", "talk_to_player", {}, emotion=agent.emotion, dialogue=self._dialogue(agent, recent_events), rationale="OFFLINE: social need is high")
+        target = world.object_by_kind("campfire")
+        return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion=agent.emotion, rationale=f"OFFLINE: default camp behaviour; most urgent={urgent}:{value:.0f}")
+
+    def _dialogue(self, agent: Agent, recent_events: list[WorldEvent]) -> str:
+        last = recent_events[-1].content if recent_events else "this place"
+        if agent.emotion == "afraid":
+            return f"{agent.name}: I don't like this. {last}"
+        if agent.emotion == "angry":
+            return f"{agent.name}: We need discipline before this island eats us alive."
+        if agent.emotion == "curious":
+            return f"{agent.name}: There is a pattern here. I can feel it."
+        if agent.emotion == "tired":
+            return f"{agent.name}: Wake me when the island stops being theatrical."
+        return f"{agent.name}: If we keep talking, maybe we stay human a little longer."
+
+
+class MozokHttpClient:
+    """Optional bridge to a running MOZOK API.
+
+    If the API fails or returns no usable action, the offline brain is used as a safe fallback.
+    v54.2 makes the fallback reason visible in event logs instead of failing silently.
+    """
+
+    mode_name = "mozok-api"
+
+    def __init__(self, base_url: str | None = None) -> None:
+        self.base_url = (base_url or os.getenv("MOZOK_API_BASE_URL") or "http://127.0.0.1:8000").rstrip("/")
+        self.timeout = float(os.getenv("MOZOK_GAME_API_TIMEOUT", "4.0"))
+        self.fallback = OfflineMozokBrain()
+        self.last_status = f"MOZOK API mode enabled: {self.base_url}"
+
+    def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
+        try:
+            for event in recent_events[-4:]:
+                self._post_world_event(world, agent, event)
+
+            urgent, value = agent.needs.most_urgent
+            target_hint = self._choose_target_object(world, agent, recent_events)
+            payload = {
+                "world_id": "island_demo",
+                "session_id": "island_demo_tick",
+                "agent_mode": "simulacra_npc",
+                "message": (
+                    f"Turn {world.turn}. {agent.name} is an island-survival NPC. "
+                    f"Most urgent need: {urgent}={value:.0f}. "
+                    f"Choose a GAME COMMAND intent for this turn. Prefer move_to_object when thirst/hunger/fatigue/stress/curiosity needs require it. "
+                    f"Target hint: {target_hint.id if target_hint else 'none'}."
+                ),
+                "pull_world_events": False,
+                "perception_events": [self._event_to_perception(event) for event in recent_events[-8:]],
+                "sensory_inputs": [self._event_to_sensory(event) for event in recent_events[-8:]],
+                "attention_focus_keywords": [urgent, "island", "survival", "water", "food", "campfire", "cave"],
+                "available_tools": [
+                    {
+                        "name": "move_to_object",
+                        "description": "Move one tile toward the best survival object: water, food, campfire, shelter, cave, radio, or another interactable object.",
+                        "action_kind": "game_command",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "tags": ["move", "object", "water", "food", "hunger", "thirst", "campfire", "shelter", "cave", "curiosity", urgent],
+                    },
+                    {
+                        "name": "talk_to_player",
+                        "description": "Speak to the player if social tension, trust, fear, resentment, or proximity makes dialogue useful.",
+                        "action_kind": "game_command",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "tags": ["talk", "dialogue", "player", "social", "trust", "fear"],
+                    },
+                    {
+                        "name": "wait",
+                        "description": "Wait and observe the camp when no useful action is available.",
+                        "action_kind": "no_op",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "tags": ["wait", "observe", "safe"],
+                    },
+                ],
+                "allowed_action_kinds": ["game_command", "no_op"],
+                "enable_cognitive_field": True,
+                "create_change_proposals": False,
+                "store_proposals": False,
+                "metadata": {
+                    "source": "mozok_island_sandbox",
+                    "needs": asdict(agent.needs),
+                    "social_to_player": asdict(agent.social_to_player),
+                    "position": asdict(agent.position),
+                    "target_hint": target_hint.id if target_hint else None,
+                },
+            }
+            response = requests.post(f"{self.base_url}/agents/{agent.id}/tick", json=payload, timeout=self.timeout)
+            if response.status_code >= 400:
+                self.last_status = f"MOZOK API fallback: tick HTTP {response.status_code}: {response.text[:160]}"
+                return self._fallback(world, agent, recent_events)
+
+            data = response.json()
+            apply_api_cognitive_trace(agent, data)
+            selected = (data.get("action_plan") or {}).get("selected_action") or data.get("selected_action") or {}
+            if not selected:
+                self.last_status = "MOZOK API fallback: tick returned no selected_action"
+                return self._fallback(world, agent, recent_events)
+
+            intent = self._selected_to_intent(world, agent, recent_events, selected, target_hint)
+            self.last_status = f"MOZOK API OK: {agent.name} -> {intent.tool_name} ({intent.rationale[:80]})"
+            return intent
+        except Exception as exc:  # keep the demo playable, but make the reason visible
+            self.last_status = f"MOZOK API fallback: {type(exc).__name__}: {str(exc)[:160]}"
+            return self._fallback(world, agent, recent_events)
+
+    def _fallback(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
+        intent = self.fallback.decide(world, agent, recent_events)
+        intent.rationale = f"{self.last_status}; {intent.rationale}"
+        return intent
+
+    def _post_world_event(self, world: WorldState, agent: Agent, event: WorldEvent) -> None:
+        payload = {
+            "events": [
+                {
+                    "world_id": "island_demo",
+                    "agent_id": agent.id,
+                    "event_type": event.event_type,
+                    "content": event.content,
+                    "source": event.source,
+                    "channel_hint": self._channel_for_event(event),
+                    "salience": event.salience,
+                    "reliability": 1.0,
+                    "tags": event.tags,
+                    "metadata": event.metadata,
+                }
+            ],
+            "store": True,
+        }
+        response = requests.post(f"{self.base_url}/world-events", json=payload, timeout=min(self.timeout, 2.0))
+        if response.status_code >= 400:
+            raise RuntimeError(f"world-events HTTP {response.status_code}: {response.text[:120]}")
+
+    def _event_to_perception(self, event: WorldEvent) -> dict[str, Any]:
+        return {
+            "content": event.content,
+            "event_type": event.event_type,
+            "source": event.source,
+            "channel_hint": self._channel_for_event(event),
+            "salience": event.salience,
+            "reliability": 1.0,
+            "tags": event.tags,
+            "metadata": event.metadata,
+        }
+
+    def _event_to_sensory(self, event: WorldEvent) -> dict[str, Any]:
+        return {
+            "channel": self._channel_for_event(event),
+            "content": event.content,
+            "intensity": max(0.1, min(10.0, event.salience)),
+            "attention": max(0.1, min(10.0, event.salience)),
+            "confidence": 1.0,
+            "source": event.source,
+            "tags": event.tags,
+            "metadata": event.metadata,
+        }
+
+    def _channel_for_event(self, event: WorldEvent) -> str:
+        if "dialogue" in event.tags:
+            return "text"
+        if "cave" in event.tags or "sound" in event.tags:
+            return "hearing"
+        if "food" in event.tags or "water" in event.tags:
+            return "body"
+        return "world_event"
+
+    def _selected_to_intent(
+        self,
+        world: WorldState,
+        agent: Agent,
+        recent_events: list[WorldEvent],
+        selected: dict[str, Any],
+        target_hint: WorldObject | None,
+    ) -> AgentIntent:
+        tool_name = selected.get("tool_name") or selected.get("action_id") or "wait"
+        action_kind = selected.get("action_kind", "no_op")
+        parameters = dict(selected.get("parameters") or {})
+        rationale = selected.get("rationale") or selected.get("label") or "MOZOK API action"
+
+        if tool_name == "move_to_object":
+            parameters.setdefault("object_id", target_hint.id if target_hint else None)
+        if tool_name == "talk_to_player" or action_kind == "speak":
+            return AgentIntent(
+                agent_id=agent.id,
+                action_kind="speak",
+                tool_name="talk_to_player",
+                parameters=parameters,
+                dialogue=selected.get("dialogue") or self._api_dialogue(agent, recent_events, rationale),
+                emotion=agent.emotion,
+                rationale=f"MOZOK API: {rationale}",
+            )
+        if tool_name not in {"move_to_object", "wait"}:
+            tool_name = "wait"
+        return AgentIntent(
+            agent_id=agent.id,
+            action_kind=action_kind,
+            tool_name=tool_name,
+            parameters=parameters,
+            dialogue=selected.get("dialogue") or "",
+            emotion=agent.emotion,
+            rationale=f"MOZOK API: {rationale}",
+        )
+
+    def _choose_target_object(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> WorldObject | None:
+        if agent.needs.thirst > 55:
+            return world.find_object_with_tag("water")
+        if agent.needs.hunger > 60:
+            return world.find_object_with_tag("food")
+        if agent.needs.fatigue > 72:
+            return world.find_object_with_tag("shelter") or world.object_by_kind("campfire")
+        if agent.needs.stress > 65:
+            return world.object_by_kind("campfire") or world.find_object_with_tag("shelter")
+        cave_event = any("cave" in event.tags for event in recent_events[-8:])
+        if cave_event and agent.needs.curiosity > 50:
+            return world.object_by_kind("cave_entrance")
+        return world.object_by_kind("campfire")
+
+    def _api_dialogue(self, agent: Agent, recent_events: list[WorldEvent], rationale: str) -> str:
+        last = recent_events[-1].content if recent_events else "the island"
+        return f"{agent.name}: I'm thinking about this — {last} ({rationale[:80]})"
+
+
+def build_brain_client() -> BrainClient:
+    # Default remains offline so the prototype always runs. Set MOZOK_GAME_USE_API=1 to force API mode.
+    if os.getenv("MOZOK_GAME_USE_API", "0") == "1":
+        return MozokHttpClient()
+    return OfflineMozokBrain()

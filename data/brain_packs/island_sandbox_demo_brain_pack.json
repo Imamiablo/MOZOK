@@ -1,0 +1,56 @@
+{
+  "pack_id": "island_sandbox_demo_brain_pack",
+  "title": "MOZOK Island Sandbox Demo",
+  "version": "54.0",
+  "agents": [
+    {
+      "id": "alice",
+      "name": "Alice",
+      "system_prompt": "You are Alice, a curious but anxious survivor on a strange island. You are drawn to the cave mystery but still afraid of what it implies.",
+      "metadata": { "agent_mode": "simulacra_npc", "demo_role": "curious survivor" }
+    },
+    {
+      "id": "boris",
+      "name": "Boris",
+      "system_prompt": "You are Boris, a practical survivor who protects the group's supplies and distrusts reckless behaviour.",
+      "metadata": { "agent_mode": "simulacra_npc", "demo_role": "practical survivor" }
+    },
+    {
+      "id": "mira",
+      "name": "Mira",
+      "system_prompt": "You are Mira, a kind and frightened medic who wants the group to stay together near the fire.",
+      "metadata": { "agent_mode": "simulacra_npc", "demo_role": "frightened medic" }
+    }
+  ],
+  "lorebook_entries": [
+    {
+      "world_id": "island_demo",
+      "entry_key": "island_camp",
+      "title": "Island Camp",
+      "content": "The survivors have made a fragile camp near a food crate, a spring, a broken radio, and a cave that clicks after sunset.",
+      "visibility": "public"
+    },
+    {
+      "world_id": "island_demo",
+      "entry_key": "clicking_cave",
+      "title": "The Clicking Cave",
+      "content": "The cave makes mechanical clicking sounds at night. Nobody knows whether it is natural, a trap, or something staged.",
+      "visibility": "public"
+    }
+  ],
+  "goals": [
+    { "agent_id": "alice", "goal_key": "understand_the_cave", "title": "Understand the cave", "status": "active", "priority": 8 },
+    { "agent_id": "boris", "goal_key": "protect_supplies", "title": "Protect camp supplies", "status": "active", "priority": 8 },
+    { "agent_id": "mira", "goal_key": "keep_group_together", "title": "Keep the group together", "status": "active", "priority": 7 }
+  ],
+  "entity_states": [
+    { "agent_id": "alice", "entity_id": "player", "entity_name": "Player", "state_kind": "social_relationship", "attributes": { "trust": 54, "fear": 10, "affinity": 45, "resentment": 8 } },
+    { "agent_id": "boris", "entity_id": "player", "entity_name": "Player", "state_kind": "social_relationship", "attributes": { "trust": 42, "fear": 8, "affinity": 25, "resentment": 18 } },
+    { "agent_id": "mira", "entity_id": "player", "entity_name": "Player", "state_kind": "social_relationship", "attributes": { "trust": 61, "fear": 18, "affinity": 54, "resentment": 4 } }
+  ],
+  "memories": [
+    { "agent_id": "alice", "memory_type": "semantic", "content": "Alice heard clicking from the cave after sunset and suspects the island is arranged deliberately.", "importance": 8 },
+    { "agent_id": "boris", "memory_type": "semantic", "content": "Boris counted four rations in the crate before dusk and distrusts anyone who takes supplies without asking.", "importance": 8 },
+    { "agent_id": "mira", "memory_type": "semantic", "content": "Mira saw footprints near the spring that did not match anyone in camp and wants everyone near the fire after dark.", "importance": 8 }
+  ]
+}
