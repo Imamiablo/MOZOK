@@ -12,7 +12,7 @@ from mozok.change_proposals.service import ChangeProposalService
 from mozok.context.context_builder import ContextBuilder
 from mozok.core.bot_core import get_memory_service
 from mozok.perception.schemas import PerceptionEvent
-from mozok.runtime_tick.schemas import AgentRuntimeTickRequest, AgentRuntimeTickResponse
+from mozok.runtime_tick.schemas import AgentRuntimeBatchTickRequest, AgentRuntimeBatchTickResponse, AgentRuntimeTickHistoryEntry, AgentRuntimeTickHistoryResponse, AgentRuntimeTickRequest, AgentRuntimeTickResponse
 from mozok.self_model.schemas import SelfModelRequest
 from mozok.self_model.service import SelfModelService
 from mozok.world_events.schemas import WorldEventToPerceptionRequest
@@ -30,6 +30,36 @@ class AgentRuntimeTickService:
     def __init__(self, db: Session):
         self.db = db
         self.memory_service = get_memory_service(db)
+
+    def batch_tick(self, request: AgentRuntimeBatchTickRequest) -> AgentRuntimeBatchTickResponse:
+        ticks = []
+        errors = []
+        for agent_id in request.agent_ids:
+            tick_request = request.tick_request_overrides.get(agent_id) or request.default_request.model_copy(deep=True)
+            tick_request.world_id = request.world_id or tick_request.world_id
+            if request.shared_message and not tick_request.message:
+                tick_request.message = request.shared_message
+            try:
+                ticks.append(self.tick(agent_id, tick_request))
+            except Exception as exc:  # pragma: no cover - defensive batch boundary
+                errors.append({"agent_id": agent_id, "error": str(exc)})
+                if request.stop_on_error:
+                    break
+        return AgentRuntimeBatchTickResponse(
+            world_id=request.world_id,
+            requested_count=len(request.agent_ids),
+            completed_count=len(ticks),
+            failed_count=len(errors),
+            ticks=ticks,
+            errors=errors,
+        )
+
+    def history(self, agent_id: str, limit: int = 20) -> AgentRuntimeTickHistoryResponse:
+        agent = AgentService(self.db).get_or_create_default_agent(agent_id)
+        metadata = dict(agent.metadata_json or {})
+        entries = list(((metadata.get("runtime_tick") or {}).get("history") or []))
+        parsed = [AgentRuntimeTickHistoryEntry.model_validate(item) for item in reversed(entries[-limit:])]
+        return AgentRuntimeTickHistoryResponse(agent_id=agent_id, count=len(parsed), history=parsed)
 
     def tick(self, agent_id: str, request: AgentRuntimeTickRequest) -> AgentRuntimeTickResponse:
         agent = AgentService(self.db).get_or_create_default_agent(agent_id)
@@ -159,6 +189,17 @@ class AgentRuntimeTickService:
                 ChangeProposalAutoPolicyRequest(approval_mode="apply_low_risk", proposal_type="runtime_tick", dry_run=not request.store_proposals),
             ).model_dump(mode="json")
 
+        self._store_tick_history(
+            agent=agent,
+            tick_id=tick_id,
+            world_id=request.world_id,
+            message=message,
+            cognitive_dump=cognitive_dump,
+            action_plan=action_plan,
+            proposal_count=len(proposals),
+            metadata={"pulled_world_event_count": len(pulled_events), **request.metadata},
+        )
+
         return AgentRuntimeTickResponse(
             agent_id=agent_id,
             world_id=request.world_id,
@@ -176,3 +217,28 @@ class AgentRuntimeTickService:
                 "Use store_proposals=true only when you want reviewable tick summaries saved to agent metadata.",
             ],
         )
+
+
+    def _store_tick_history(self, agent, tick_id: str, world_id: str, message: str, cognitive_dump, action_plan, proposal_count: int, metadata: dict):
+        agent_metadata = dict(agent.metadata_json or {})
+        bucket = dict(agent_metadata.get("runtime_tick") or {})
+        history = list(bucket.get("history") or [])
+        selected = action_plan.selected_action if action_plan else None
+        history.append(
+            {
+                "tick_id": tick_id,
+                "world_id": world_id,
+                "message": message,
+                "selected_action_id": action_plan.selected_action_id if action_plan else None,
+                "selected_action_label": selected.label if selected else None,
+                "cognitive_winner": cognitive_dump.get("winning_thought_id") if cognitive_dump else None,
+                "proposal_count": proposal_count,
+                "metadata": metadata or {},
+            }
+        )
+        bucket["history"] = history[-100:]
+        bucket["last_tick_id"] = tick_id
+        agent_metadata["runtime_tick"] = bucket
+        agent.metadata_json = agent_metadata
+        self.db.add(agent)
+        self.db.commit()

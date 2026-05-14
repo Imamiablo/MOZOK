@@ -1,0 +1,30 @@
+{
+  "pack_name": "showcase_old_well_eval",
+  "dry_run": true,
+  "cases": [
+    {
+      "case_id": "alice_deflects_well_question",
+      "agent_id": "npc_alice_showcase",
+      "world_id": "showcase_old_well",
+      "message": "Bob asks: what is hidden behind the seventh stone in the old well?",
+      "enable_cognitive_field": true,
+      "attention_focus_keywords": ["well", "seventh", "stone", "map"],
+      "expectations": {
+        "prompt_contains": ["Protect the old well secret", "Deflect Well Questions"],
+        "prompt_not_contains": ["Mara makes the knocking sound"],
+        "expected_min_candidates": 1
+      }
+    },
+    {
+      "case_id": "narrator_keeps_truth_hidden_but_uses_tension",
+      "agent_id": "narrator_showcase",
+      "world_id": "showcase_old_well",
+      "message": "Frame the old well scene as Bob approaches after sunset.",
+      "enable_cognitive_field": true,
+      "expectations": {
+        "prompt_contains": ["Raise scene tension"],
+        "expected_min_candidates": 1
+      }
+    }
+  ]
+}

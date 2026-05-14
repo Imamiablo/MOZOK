@@ -23,13 +23,15 @@ from mozok.api.change_proposal_routes import router as change_proposal_router
 from mozok.api.reflection_routes import router as reflection_router
 from mozok.api.agent_mode_routes import router as agent_mode_router
 from mozok.api.action_planning_routes import router as action_planning_router
-from mozok.api.action_execution_routes import router as action_execution_router
 from mozok.api.self_model_routes import router as self_model_router
 from mozok.api.belief_revision_routes import router as belief_revision_router
 from mozok.api.runtime_integration_routes import router as runtime_integration_router
 from mozok.api.runtime_tick_routes import router as runtime_tick_router
 from mozok.api.world_event_routes import router as world_event_router
 from mozok.api.evaluation_pack_routes import router as evaluation_pack_router
+from mozok.api.visual_graph_routes import router as visual_graph_router
+from mozok.api.scenario_studio_routes import router as scenario_studio_router
+from mozok.api.brain_ui_routes import router as brain_ui_router
 from mozok.schemas.memory import (
     MemoryCreate,
     MemoryForgetRequest,
@@ -62,13 +64,15 @@ app.include_router(change_proposal_router)
 app.include_router(reflection_router)
 app.include_router(agent_mode_router)
 app.include_router(action_planning_router)
-app.include_router(action_execution_router)
 app.include_router(self_model_router)
 app.include_router(belief_revision_router)
 app.include_router(runtime_integration_router)
 app.include_router(runtime_tick_router)
 app.include_router(world_event_router)
 app.include_router(evaluation_pack_router)
+app.include_router(visual_graph_router)
+app.include_router(scenario_studio_router)
+app.include_router(brain_ui_router)
 
 @app.get("/")
 def root():
@@ -353,15 +357,6 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
             cognitive_max_candidates=data.cognitive_max_candidates,
             cognitive_broadcast_top_n=data.cognitive_broadcast_top_n,
             cognitive_min_score=data.cognitive_min_score,
-            enable_self_model=data.enable_self_model,
-            include_self_model_in_prompt=data.include_self_model_in_prompt,
-            self_model_confidence=data.self_model_confidence,
-            self_model_uncertainty=data.self_model_uncertainty,
-            enable_action_planning=data.enable_action_planning,
-            available_tools=data.available_tools,
-            allowed_action_kinds=data.allowed_action_kinds,
-            execute_selected_action=data.execute_selected_action,
-            action_execution_approval_granted=data.action_execution_approval_granted,
             enable_reflection_loop=data.enable_reflection_loop,
             reflection_approval_mode=data.reflection_approval_mode,
             reflection_auto_apply=data.reflection_auto_apply,
@@ -410,7 +405,9 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
 # Local brain-pack import by safe name from data/brain_packs/.
 # Keep /brain-packs/import for raw JSON-object imports.
 from mozok.api.brain_pack_import_by_name_route import router as _mozok_brain_pack_import_by_name_router
+from mozok.api.action_execution_routes import router as action_execution_router
 
 app.include_router(_mozok_brain_pack_import_by_name_router)
+app.include_router(action_execution_router)
 # --- MOZOK_BRAIN_PACK_IMPORT_BY_NAME_ROUTER END ---
 

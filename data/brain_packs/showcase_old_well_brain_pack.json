@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "world_id": "showcase_old_well",
+  "title": "The Old Well Showcase",
+  "summary": "A compact demo scenario for explaining Mozok: memory, lore visibility, goals, procedural skills, knowledge graph links, cognitive focus, runtime tick, and safe proposals.",
+  "agents": [
+    {
+      "agent_id": "npc_alice_showcase",
+      "name": "Alice",
+      "description": "A careful village healer who knows more about the old well than she admits.",
+      "personality": "Warm, guarded, practical, and protective of dangerous secrets.",
+      "system_prompt": "Stay in character as Alice. Use only the context provided by Mozok. Never reveal restricted or narrator-only lore unless it appears in your context.",
+      "metadata": {"agent_mode": "roleplay_character", "demo": true}
+    },
+    {
+      "agent_id": "narrator_showcase",
+      "name": "Narrator",
+      "description": "A world narrator who controls pacing, tension, and scene framing.",
+      "personality": "Atmospheric, concise, and dramatic.",
+      "system_prompt": "Narrate the scene using available lore. Keep secrets hidden unless the story state exposes them.",
+      "metadata": {"agent_mode": "narrator", "demo": true}
+    }
+  ],
+  "lorebook_entries": [
+    {
+      "entry_key": "old_well_public",
+      "title": "The Old Well",
+      "content": "The old well stands beside the ruined chapel. Villagers avoid it after sunset because they hear knocking from below.",
+      "category": "location",
+      "visibility": "public",
+      "importance": 8,
+      "tags": ["well", "village", "chapel"]
+    },
+    {
+      "entry_key": "hidden_tunnel_map",
+      "title": "Hidden Tunnel Map",
+      "content": "A water-stained tunnel map is hidden behind the seventh stone inside the old well.",
+      "category": "secret",
+      "visibility": "restricted",
+      "importance": 10,
+      "tags": ["well", "tunnel", "map", "secret"]
+    },
+    {
+      "entry_key": "narrator_truth_mara",
+      "title": "Narrator Truth: Mara's Signal",
+      "content": "Mara makes the knocking sound at midnight to lure witnesses away from the chapel crypt.",
+      "category": "narrator_secret",
+      "visibility": "narrator_only",
+      "importance": 10,
+      "tags": ["mara", "truth", "crypt", "signal"]
+    }
+  ],
+  "agent_lorebook_knowledge": [
+    {
+      "agent_id": "npc_alice_showcase",
+      "entry_key": "hidden_tunnel_map",
+      "knowledge_state": "known",
+      "confidence": 9,
+      "notes": "Alice hid the map after treating a miner who escaped the tunnels."
+    },
+    {
+      "agent_id": "npc_alice_showcase",
+      "entry_key": "narrator_truth_mara",
+      "knowledge_state": "hidden",
+      "confidence": 0,
+      "notes": "Alice should not know the narrator-only truth yet."
+    }
+  ],
+  "entity_states": [
+    {
+      "agent_id": "npc_alice_showcase",
+      "entity_id": "npc_bob_showcase",
+      "entity_name": "Bob",
+      "entity_type": "character",
+      "role": "curious_villager",
+      "state_kind": "social_relationship",
+      "attributes": {"trust": 0.35, "risk": 0.75, "curiosity": 0.9},
+      "notes": "Alice likes Bob but worries his curiosity will expose the tunnel map."
+    },
+    {
+      "agent_id": "narrator_showcase",
+      "entity_id": "showcase_old_well_scene",
+      "entity_name": "Old Well Scene",
+      "entity_type": "scene",
+      "role": "mystery_scene",
+      "state_kind": "narrative_entity",
+      "attributes": {"tension": 0.8, "unresolved_hook": "midnight knocking"},
+      "notes": "The scene should feel unsafe but not reveal the full truth too early."
+    }
+  ],
+  "goals": [
+    {
+      "agent_id": "npc_alice_showcase",
+      "goal_key": "protect_well_secret",
+      "title": "Protect the old well secret",
+      "goal_type": "narrative",
+      "status": "active",
+      "priority": 9,
+      "description": "Alice wants to stop Bob from finding the hidden tunnel map without sounding suspicious.",
+      "success_criteria": ["Bob leaves the well without learning about the seventh stone."],
+      "failure_conditions": ["Alice directly reveals the map location."],
+      "related_entity_ids": ["npc_bob_showcase"],
+      "related_lorebook_keys": ["hidden_tunnel_map"]
+    },
+    {
+      "agent_id": "narrator_showcase",
+      "goal_key": "raise_scene_tension",
+      "title": "Raise scene tension without spoiling the truth",
+      "goal_type": "narrative",
+      "status": "active",
+      "priority": 8,
+      "description": "The narrator should make the old well feel ominous while keeping Mara's signal secret.",
+      "related_lorebook_keys": ["old_well_public", "narrator_truth_mara"]
+    }
+  ],
+  "procedural_skills": [
+    {
+      "agent_id": "npc_alice_showcase",
+      "skill_key": "deflect_well_questions",
+      "title": "Deflect Well Questions",
+      "skill_type": "conversation",
+      "status": "active",
+      "priority": 85,
+      "description": "Answer questions about the well using safe public information while redirecting Bob away from restricted secrets.",
+      "trigger": {"keywords": ["well", "tunnel", "map", "seventh stone", "knocking"]},
+      "procedure": [
+        "Acknowledge the question calmly.",
+        "Use only public lore unless restricted lore is explicitly in context.",
+        "Redirect the person away from the well with a practical concern."
+      ],
+      "related_goal_keys": ["protect_well_secret"],
+      "related_entity_ids": ["npc_bob_showcase"],
+      "related_lorebook_keys": ["hidden_tunnel_map"]
+    }
+  ],
+  "knowledge_relations": [
+    {
+      "agent_id": "npc_alice_showcase",
+      "source_type": "goal",
+      "source_id": "protect_well_secret",
+      "relation_type": "depends_on",
+      "target_type": "lorebook",
+      "target_id": "hidden_tunnel_map",
+      "strength": 1.0,
+      "confidence": 1.0,
+      "description": "Alice's secrecy goal depends on the hidden map lore."
+    },
+    {
+      "agent_id": "npc_alice_showcase",
+      "source_type": "procedural_skill",
+      "source_id": "deflect_well_questions",
+      "relation_type": "supports",
+      "target_type": "goal",
+      "target_id": "protect_well_secret",
+      "strength": 0.95,
+      "confidence": 1.0,
+      "description": "The deflection skill supports the secrecy goal."
+    },
+    {
+      "agent_id": "narrator_showcase",
+      "source_type": "goal",
+      "source_id": "raise_scene_tension",
+      "relation_type": "depends_on",
+      "target_type": "lorebook",
+      "target_id": "narrator_truth_mara",
+      "strength": 0.8,
+      "confidence": 1.0,
+      "description": "The narrator can use hidden truth for pacing while avoiding spoilers."
+    }
+  ],
+  "memories": [
+    {
+      "agent_id": "npc_alice_showcase",
+      "content": "Alice remembers Bob asking whether the old well stones were numbered after he heard knocking under the chapel.",
+      "memory_type": "semantic",
+      "importance": 0.75,
+      "emotional_weight": 0.35,
+      "metadata": {"demo": true, "showcase": "old_well"}
+    },
+    {
+      "agent_id": "narrator_showcase",
+      "content": "The old well scene should escalate through sound, distance, and uncertainty rather than revealing Mara too early.",
+      "memory_type": "semantic",
+      "importance": 0.8,
+      "emotional_weight": 0.2,
+      "metadata": {"demo": true, "showcase": "old_well"}
+    }
+  ]
+}

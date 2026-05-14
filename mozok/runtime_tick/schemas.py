@@ -50,3 +50,42 @@ class AgentRuntimeTickResponse(BaseModel):
     proposals: list[dict[str, Any]] = Field(default_factory=list)
     auto_apply_result: dict[str, Any] | None = None
     notes: list[str] = Field(default_factory=list)
+
+
+class AgentRuntimeBatchTickRequest(BaseModel):
+    world_id: str = "default"
+    agent_ids: list[str] = Field(default_factory=list)
+    shared_message: str = ""
+    tick_request_overrides: dict[str, AgentRuntimeTickRequest] = Field(default_factory=dict)
+    default_request: AgentRuntimeTickRequest = Field(default_factory=AgentRuntimeTickRequest)
+    stop_on_error: bool = False
+
+
+class AgentRuntimeBatchTickResponse(BaseModel):
+    world_id: str
+    requested_count: int = 0
+    completed_count: int = 0
+    failed_count: int = 0
+    ticks: list[AgentRuntimeTickResponse] = Field(default_factory=list)
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AgentRuntimeTickHistoryRequest(BaseModel):
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class AgentRuntimeTickHistoryEntry(BaseModel):
+    tick_id: str
+    world_id: str
+    message: str = ""
+    selected_action_id: str | None = None
+    selected_action_label: str | None = None
+    cognitive_winner: str | None = None
+    proposal_count: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRuntimeTickHistoryResponse(BaseModel):
+    agent_id: str
+    count: int = 0
+    history: list[AgentRuntimeTickHistoryEntry] = Field(default_factory=list)
