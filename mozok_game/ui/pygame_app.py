@@ -29,6 +29,7 @@ class PygameApp:
         self.world: WorldState = load_world(base_dir)
         self.brain = build_brain_client()
         self.dialogue_menu: dict | None = None
+        self.text_chat: dict | None = None
         self.world.log("brain_mode", getattr(self.brain, "last_status", "Brain client ready"), source="game", salience=4, tags=["debug", "brain"])
         width = 1180
         height = 720
@@ -43,14 +44,18 @@ class PygameApp:
             for event in self.pygame.event.get():
                 if event.type == self.pygame.QUIT:
                     running = False
+                elif event.type == self.pygame.TEXTINPUT and self.text_chat:
+                    self.text_chat["text"] += event.text
                 elif event.type == self.pygame.KEYDOWN:
                     running = self._handle_key(event.key)
-            self.renderer.draw(self.world, self.dialogue_menu)
+            self.renderer.draw(self.world, self.dialogue_menu, self.text_chat)
             self.clock.tick(30)
         self.pygame.quit()
 
     def _handle_key(self, key: int) -> bool:
         pg = self.pygame
+        if self.text_chat:
+            return self._handle_text_chat_key(key)
         if self.dialogue_menu:
             return self._handle_dialogue_key(key)
         if key == pg.K_ESCAPE:
@@ -67,8 +72,7 @@ class PygameApp:
                 run_agent_ticks(self.world, self.brain)
             return True
         if key in {pg.K_t}:
-            if self._talk():
-                run_agent_ticks(self.world, self.brain)
+            self._open_text_chat()
             return True
         if key in {pg.K_LEFT, pg.K_a}:
             self._rotate_player(-1)
@@ -139,6 +143,24 @@ class PygameApp:
         run_agent_ticks(self.world, self.brain)
         return True
 
+    def _handle_text_chat_key(self, key: int) -> bool:
+        pg = self.pygame
+        if key == pg.K_ESCAPE:
+            self.text_chat = None
+            return True
+        if key == pg.K_BACKSPACE:
+            self.text_chat["text"] = self.text_chat["text"][:-1]
+            return True
+        if key == pg.K_RETURN:
+            text = self.text_chat.get("text", "").strip()
+            targets = list(self.text_chat.get("target_ids", []))
+            self.text_chat = None
+            if text and targets:
+                self._send_group_chat(text, targets)
+                run_agent_ticks(self.world, self.brain)
+            return True
+        return True
+
     def _interact(self) -> bool:
         front = self._front_position()
         front_agent = self._agent_at(front)
@@ -172,6 +194,49 @@ class PygameApp:
         else:
             self.world.log("player_talk_none", "You call out, but nobody is close enough to answer.", tags=["dialogue"])
         return False
+
+    def _open_text_chat(self) -> None:
+        agents = self.world.nearby_agents(distance=1)
+        if not agents:
+            self.world.log("player_talk_none", "Nobody is on a neighbouring tile.", tags=["dialogue"])
+            return
+        target_ids = [agent.id for agent in agents]
+        self.world.selected_agent_id = target_ids[0]
+        self.text_chat = {
+            "target_ids": target_ids,
+            "text": "",
+        }
+
+    def _send_group_chat(self, text: str, target_ids: list[str]) -> None:
+        agents = [self.world.agents[agent_id] for agent_id in target_ids if agent_id in self.world.agents]
+        if not agents:
+            self.world.log("player_talk_none", "Nobody is close enough to answer.", tags=["dialogue"])
+            return
+        participant_names = [agent.name for agent in agents]
+        self.world.chat("player", "You", text, source="player")
+        self.world.log(
+            "player_group_chat",
+            f"You say to {', '.join(participant_names)}: {text}",
+            source="player",
+            salience=7,
+            tags=["dialogue", "player", "group_chat"],
+            metadata={"target_agent_ids": target_ids},
+        )
+        for agent in agents:
+            reply = self.brain.chat(self.world, agent, text, participant_names)
+            clean = reply.strip()
+            if clean.lower().startswith(f"{agent.name.lower()}:"):
+                clean = clean.split(":", 1)[1].strip()
+            agent.last_dialogue = f"{agent.name}: {clean}"
+            self.world.chat(agent.id, agent.name, clean, source="agent")
+            self.world.log(
+                "agent_chat_response",
+                f"{agent.name}: {clean}",
+                source=agent.id,
+                salience=7,
+                tags=["dialogue", "agent", "group_chat"],
+                metadata={"agent_id": agent.id, "participants": participant_names},
+            )
 
     def _open_dialogue_menu(self, agent) -> None:
         self.world.selected_agent_id = agent.id

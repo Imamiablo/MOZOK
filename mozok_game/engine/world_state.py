@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from mozok_game.engine.map_grid import MapGrid
-from mozok_game.engine.models import Agent, BrainFlash, Needs, Player, Position, SocialState, WorldEvent, WorldObject
+from mozok_game.engine.models import Agent, BrainFlash, ChatLine, Needs, Player, Position, SocialState, WorldEvent, WorldObject
 
 
 @dataclass
@@ -19,6 +19,7 @@ class WorldState:
     player_facing: str = "north"
     event_log: list[WorldEvent] = field(default_factory=list)
     brain_flashes: list[BrainFlash] = field(default_factory=list)
+    chat_log: list[ChatLine] = field(default_factory=list)
     scripted_flags: set[str] = field(default_factory=set)
     last_agent_conversation_turn: int = -99
     selected_agent_id: str | None = None
@@ -51,6 +52,18 @@ class WorldState:
         self.brain_flashes.append(flash)
         self.brain_flashes = self.brain_flashes[-12:]
         return flash
+
+    def chat(self, speaker_id: str, speaker_name: str, content: str, source: str = "player") -> ChatLine:
+        line = ChatLine(
+            turn=self.turn,
+            speaker_id=speaker_id,
+            speaker_name=speaker_name,
+            content=content,
+            source=source,
+        )
+        self.chat_log.append(line)
+        self.chat_log = self.chat_log[-30:]
+        return line
 
     def occupied_positions(self, exclude_agent_id: str | None = None) -> set[tuple[int, int]]:
         result = {(self.player.position.x, self.player.position.y)}

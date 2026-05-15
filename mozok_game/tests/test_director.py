@@ -2,6 +2,7 @@ from pathlib import Path
 
 from mozok_game.engine.director import apply_dialogue_choice, build_dialogue_options, run_social_director, trigger_scripted_moment
 from mozok_game.engine.world_state import load_world
+from mozok_game.mozok_client.client import OfflineMozokBrain
 
 
 def base_dir() -> Path:
@@ -37,3 +38,17 @@ def test_social_director_adds_agent_dialogue_when_agents_are_near():
 
     assert world.last_agent_conversation_turn == world.turn
     assert world.event_log[-1].event_type == "agent_agent_dialogue"
+
+
+def test_offline_group_chat_records_agent_reply():
+    world = load_world(base_dir())
+    alice = world.agents["alice"]
+    brain = OfflineMozokBrain()
+
+    world.chat("player", "You", "What do you think about the cave?", source="player")
+    reply = brain.chat(world, alice, "What do you think about the cave?", ["Alice", "Mira"])
+    world.chat(alice.id, alice.name, reply, source="agent")
+
+    assert reply
+    assert world.chat_log[-1].speaker_id == "alice"
+    assert "Alice" in alice.last_dialogue

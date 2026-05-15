@@ -114,6 +114,15 @@ class BrainFlash:
 
 
 @dataclass(slots=True)
+class ChatLine:
+    turn: int
+    speaker_id: str
+    speaker_name: str
+    content: str
+    source: str = "player"
+
+
+@dataclass(slots=True)
 class Player:
     position: Position
     inventory: list[str] = field(default_factory=list)

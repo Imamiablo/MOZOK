@@ -15,12 +15,13 @@ The player wakes up in a tiny island camp. Alice wants to understand the cave. B
 3. Explain that taking food creates a world event.
 4. Wait a few turns.
 5. Show agents moving towards water, food, shelter, fire, or cave depending on their needs.
-6. Talk to Alice or Mira.
-7. Point at the portrait and intent panel: emotion and rationale are visible as agent state.
-8. Choose a dialogue topic and show that conversation can surface memory, intent, trust, fear, or suspicion.
-9. Inspect the cave, radio, or food crate and point at memory flashes.
-10. Press `Tab` to show the debug overlay.
-11. Explain: "These are the signals we will feed to MOZOK. The game owns physics; MOZOK owns meaning and intention."
+6. Stand next to Alice or Mira, press `T`, and type a free-text question.
+7. Explain that every adjacent agent gets its own `/chat` call and responds from its own context.
+8. Point at the portrait and intent panel: emotion, cognitive focus, and rationale are visible as agent state.
+9. Choose a quick dialogue topic with `E` and show that conversation can surface memory, intent, trust, fear, or suspicion.
+10. Inspect the cave, radio, or food crate and point at memory flashes.
+11. Press `Tab` to show the debug overlay.
+12. Explain: "These are the signals we will feed to MOZOK. The game owns physics; MOZOK owns meaning and intention."
 
 ## Best demo moment
 

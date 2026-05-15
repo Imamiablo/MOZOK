@@ -18,6 +18,9 @@ class BrainClient(Protocol):
     def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
         ...
 
+    def chat(self, world: WorldState, agent: Agent, message: str, participant_names: list[str]) -> str:
+        ...
+
 
 class OfflineMozokBrain:
     """Deterministic stand-in for MOZOK so the prototype is playable immediately."""
@@ -59,6 +62,23 @@ class OfflineMozokBrain:
         if agent.emotion == "tired":
             return f"{agent.name}: Wake me when the island stops being theatrical."
         return f"{agent.name}: If we keep talking, maybe we stay human a little longer."
+
+    def chat(self, world: WorldState, agent: Agent, message: str, participant_names: list[str]) -> str:
+        recent = world.event_log[-1].content if world.event_log else "the island is quiet"
+        group = ", ".join(name for name in participant_names if name != agent.name)
+        group_hint = f" I know {group} can hear this." if group else ""
+        if agent.id == "alice":
+            reply = f"I keep mapping your question back to the cave. {recent}.{group_hint}"
+        elif agent.id == "boris":
+            reply = f"My answer is practical: count supplies, count risks, then talk. You asked: {message[:80]}.{group_hint}"
+        elif agent.id == "mira":
+            reply = f"I hear you. But I am watching everyone's stress while we talk. {recent}.{group_hint}"
+        else:
+            reply = f"I heard you: {message}"
+        agent.last_dialogue = f"{agent.name}: {reply}"
+        agent.brain_focus = "Player free-text dialogue"
+        agent.brain_broadcast = f"Offline chat fallback answered player message: {message[:120]}"
+        return reply
 
 
 class MozokHttpClient:
@@ -158,6 +178,61 @@ class MozokHttpClient:
         intent = self.fallback.decide(world, agent, recent_events)
         intent.rationale = f"{self.last_status}; {intent.rationale}"
         return intent
+
+    def chat(self, world: WorldState, agent: Agent, message: str, participant_names: list[str]) -> str:
+        try:
+            recent_events = world.event_log[-8:]
+            for event in recent_events[-4:]:
+                self._post_world_event(world, agent, event)
+
+            group_text = ", ".join(participant_names)
+            transcript = self._group_transcript(world)
+            prompt = (
+                f"Island sandbox group chat. The player says: {message}\n"
+                f"Nearby participants: {group_text}.\n"
+                f"You are {agent.name}. Reply as {agent.name}, in character, briefly but meaningfully. "
+                f"React to other nearby agents if useful. Do not narrate actions you cannot perform.\n"
+                f"Recent group transcript:\n{transcript}"
+            )
+            payload = {
+                "agent_id": agent.id,
+                "message": prompt,
+                "session_id": "island_demo_group_chat",
+                "agent_mode": "simulacra_npc",
+                "world_id": "island_demo",
+                "short_term_limit": 12,
+                "include_goals": True,
+                "include_procedural_skills": True,
+                "select_relevant_procedural_skills": True,
+                "include_knowledge_relations": True,
+                "include_related_knowledge_relations": True,
+                "knowledge_relation_traversal_depth": 2,
+                "include_entity_states": True,
+                "enable_cognitive_field": True,
+                "enable_self_model": True,
+                "enable_reflection_loop": False,
+                "reflection_store_proposals": False,
+                "sensory_inputs": [self._event_to_sensory(event) for event in recent_events],
+                "perception_events": [self._event_to_perception(event) for event in recent_events],
+                "attention_focus_keywords": ["dialogue", "player", agent.name, *participant_names, "island", "cave", "food", "radio"],
+            }
+            response = requests.post(f"{self.base_url}/chat", json=payload, timeout=max(self.timeout, 30.0))
+            if response.status_code >= 400:
+                self.last_status = f"MOZOK API chat fallback: HTTP {response.status_code}: {response.text[:160]}"
+                return self.fallback.chat(world, agent, message, participant_names)
+
+            data = response.json()
+            apply_api_cognitive_trace(agent, data)
+            text = str(data.get("response") or "").strip()
+            if not text:
+                self.last_status = "MOZOK API chat fallback: empty response"
+                return self.fallback.chat(world, agent, message, participant_names)
+            self.last_status = f"MOZOK API chat OK: {agent.name}"
+            agent.last_dialogue = f"{agent.name}: {text}"
+            return text
+        except Exception as exc:
+            self.last_status = f"MOZOK API chat fallback: {type(exc).__name__}: {str(exc)[:160]}"
+            return self.fallback.chat(world, agent, message, participant_names)
 
     def _post_world_event(self, world: WorldState, agent: Agent, event: WorldEvent) -> None:
         payload = {
@@ -268,6 +343,10 @@ class MozokHttpClient:
     def _api_dialogue(self, agent: Agent, recent_events: list[WorldEvent], rationale: str) -> str:
         last = recent_events[-1].content if recent_events else "the island"
         return f"{agent.name}: I'm thinking about this — {last} ({rationale[:80]})"
+
+    def _group_transcript(self, world: WorldState) -> str:
+        lines = [f"[{item.turn:03d}] {item.speaker_name}: {item.content}" for item in world.chat_log[-8:]]
+        return "\n".join(lines) if lines else "No prior group chat in this scene."
 
 
 def build_brain_client() -> BrainClient:

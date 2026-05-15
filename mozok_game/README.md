@@ -13,6 +13,7 @@ This prototype is intentionally compact:
 - avatar-expression panel
 - tactical minimap
 - dialogue topic menu
+- free-text group chat through MOZOK `/chat`
 - memory flash feed
 - cognitive-field/intent panel
 - scripted cave, radio, and food-supply moments
@@ -49,7 +50,8 @@ That launcher starts PostgreSQL, initialises the Mozok database, imports the isl
 - `A` / Left: turn left
 - `D` / Right: turn right
 - `E`: interact with object ahead, or open dialogue with agent ahead
-- `T`: open dialogue menu with nearby agent
+- `T`: open free-text group chat with all agents on neighbouring tiles
+- `Enter`: send typed chat message
 - `1` / `2` / `3`: choose dialogue topic
 - `Space`: wait / end turn
 - `Tab`: toggle debug overlay
@@ -64,9 +66,11 @@ That launcher starts PostgreSQL, initialises the Mozok database, imports the isl
 5. Wait several turns.
 6. Watch agents move, become hungry/thirsty/tired/stressed, and change avatar emotion.
 7. Point at each agent's visible intent/rationale panel.
-8. Choose a dialogue topic and show that the conversation can surface memory, intent, trust, fear, or suspicion.
-9. Inspect the cave, radio, or food crate and point at memory flashes.
-10. Open the event log/debug overlay and explain that these events are what MOZOK can consume.
+8. Stand next to one or more agents, press `T`, type a question, and send it to the whole nearby group.
+9. In MOZOK API mode, each adjacent agent answers through `/chat` using its own memories, goals, entity state, and cognitive field.
+10. Choose a quick dialogue topic with `E` and show that the conversation can surface memory, intent, trust, fear, or suspicion.
+11. Inspect the cave, radio, or food crate and point at memory flashes.
+12. Open the event log/debug overlay and explain that these events are what MOZOK can consume.
 
 ## MOZOK integration mode
 

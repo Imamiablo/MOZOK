@@ -76,7 +76,7 @@ class Renderer:
         self.debug = False
         self.avatar_cache: dict[tuple[str, str], Any] = {}
 
-    def draw(self, world: WorldState, dialogue_menu: dict | None = None) -> None:
+    def draw(self, world: WorldState, dialogue_menu: dict | None = None, text_chat: dict | None = None) -> None:
         self.screen.fill((10, 12, 18))
         view_rect = self.pygame.Rect(16, 16, 760, 470)
         side_rect = self.pygame.Rect(796, 16, 368, 470)
@@ -88,6 +88,8 @@ class Renderer:
             self._draw_debug(world)
         if dialogue_menu:
             self._draw_dialogue_menu(world, dialogue_menu)
+        if text_chat:
+            self._draw_text_chat(world, text_chat)
         self.pygame.display.flip()
 
     def _draw_first_person_view(self, world: WorldState, rect: Any) -> None:
@@ -360,6 +362,42 @@ class Renderer:
             self._line(option_rect.x + 16, option_rect.y + 14, f"{index}. {option['label']}", (239, 239, 226), self.label)
             y += 60
         self._line(rect.x + 24, rect.bottom - 28, "1-3 choose / T or Esc close", (178, 186, 193), self.small)
+
+    def _draw_text_chat(self, world: WorldState, text_chat: dict) -> None:
+        overlay = self.pygame.Surface(self.screen.get_size(), self.pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 132))
+        self.screen.blit(overlay, (0, 0))
+
+        target_ids = list(text_chat.get("target_ids", []))
+        agents = [world.agents[agent_id] for agent_id in target_ids if agent_id in world.agents]
+        names = ", ".join(agent.name for agent in agents) or "nobody"
+        rect = self.pygame.Rect(210, 92, 760, 470)
+        self.pygame.draw.rect(self.screen, (22, 25, 33), rect, border_radius=8)
+        self.pygame.draw.rect(self.screen, (115, 124, 145), rect, width=1, border_radius=8)
+        self._line(rect.x + 22, rect.y + 18, "Group Chat", (248, 244, 232), self.title)
+        self._line(rect.x + 24, rect.y + 54, f"Nearby: {names}", (209, 217, 219), self.small)
+
+        x = rect.x + 24
+        y = rect.y + 88
+        for line in world.chat_log[-8:]:
+            speaker_colour = (238, 230, 185) if line.source == "player" else (178, 212, 232)
+            self._line(x, y, f"{line.speaker_name}:", speaker_colour, self.small)
+            wrapped = self._wrap(line.content, 78, 3)
+            yy = y
+            for idx, text in enumerate(wrapped):
+                self._line(x + 112, yy, text, (232, 232, 224), self.small)
+                yy += 20
+            y = max(y + 24, yy + 4)
+            if y > rect.y + 340:
+                break
+
+        input_rect = self.pygame.Rect(rect.x + 24, rect.bottom - 84, rect.w - 48, 48)
+        self.pygame.draw.rect(self.screen, (34, 38, 49), input_rect, border_radius=7)
+        self.pygame.draw.rect(self.screen, (91, 101, 121), input_rect, width=1, border_radius=7)
+        text = str(text_chat.get("text", ""))
+        cursor = "_" if (self.pygame.time.get_ticks() // 450) % 2 == 0 else ""
+        self._line(input_rect.x + 14, input_rect.y + 14, (text + cursor)[-86:], (245, 245, 235), self.label)
+        self._line(rect.x + 24, rect.bottom - 28, "Type message / Enter send to all adjacent agents / Esc close", (178, 186, 193), self.small)
 
     def _focused_agent(self, world: WorldState) -> Agent | None:
         if world.selected_agent_id and world.selected_agent_id in world.agents:
