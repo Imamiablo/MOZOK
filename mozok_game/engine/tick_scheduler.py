@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from mozok_game.engine.capabilities import execute_item_action
 from mozok_game.engine.director import run_social_director, update_cognitive_trace
 from mozok_game.engine.interactions import talk_to_agent
-from mozok_game.engine.inventory import add_item, item_name, transfer_item
+from mozok_game.engine.inventory import add_item, has_item, item_name, transfer_item
 from mozok_game.engine.needs import apply_environment_needs, update_emotion
 from mozok_game.engine.pathfinding import next_step_towards
+from mozok_game.engine.storylets import run_storylet_director
 from mozok_game.engine.world_state import WorldState
 from mozok_game.mozok_client.client import BrainClient
 
@@ -37,6 +39,9 @@ def run_agent_ticks(world: WorldState, brain: BrainClient) -> None:
 
 def _apply_player_commitment(world: WorldState, agent_id: str) -> bool:
     agent = world.agents[agent_id]
+    if agent.active_commitment and agent.active_commitment.status == "active":
+        return _apply_active_commitment(world, agent)
+
     if agent.following_player:
         interrupt = _commitment_interrupt_reason(world, agent)
         if interrupt:
@@ -121,6 +126,123 @@ def _apply_player_commitment(world: WorldState, agent_id: str) -> bool:
     return False
 
 
+def _apply_active_commitment(world: WorldState, agent) -> bool:
+    commitment = agent.active_commitment
+    if not commitment:
+        return False
+    target_obj = world.objects.get(commitment.target_object_id) if commitment.target_object_id else None
+    interrupt = _commitment_interrupt_reason(world, agent, target_obj) or _constraint_interrupt_reason(world, agent, commitment, target_obj)
+    if interrupt:
+        _interrupt_commitment(world, agent, interrupt)
+        return False
+    if commitment.expiry_turns and world.turn - commitment.started_turn > commitment.expiry_turns:
+        _finish_commitment(world, agent, "expired", f"commitment expired after {commitment.expiry_turns} turns")
+        return False
+
+    if commitment.type == "follow":
+        agent.following_player = True
+        agent.command_target_object_id = ""
+        agent.last_action = "follow_player"
+        agent.last_rationale = commitment.accepted_because or commitment.goal
+        agent.current_plan = f"commitment: follow -> You"
+        agent.current_target_object_id = ""
+        agent.current_target_agent_id = ""
+        if agent.position.manhattan(world.player.position) <= int(commitment.constraints.get("stay_within_distance", 2)):
+            return True
+        blocked = world.occupied_positions(exclude_agent_id=agent.id)
+        blocked.discard((world.player.position.x, world.player.position.y))
+        step = next_step_towards(world.grid, agent.position, world.player.position, blocked=blocked)
+        if step and not (step.x == world.player.position.x and step.y == world.player.position.y):
+            agent.position = step
+            world.log(
+                "agent_follow_player",
+                f"{agent.name} follows you under commitment {commitment.id}.",
+                source=agent.id,
+                salience=5,
+                tags=["agent", "movement", "follow", "commitment"],
+                metadata={"agent_id": agent.id, "commitment_id": commitment.id},
+            )
+        else:
+            world.log("agent_follow_blocked", f"{agent.name} tries to follow, but cannot find a path.", source=agent.id, tags=["agent", "blocked", "follow"])
+        return True
+
+    if commitment.type in {"inspect", "fetch", "go_to_object", "guard"}:
+        if not target_obj:
+            _finish_commitment(world, agent, "failed", "target object disappeared")
+            return False
+        agent.following_player = False
+        agent.command_target_object_id = target_obj.id
+        agent.command_reason = commitment.accepted_because
+        agent.last_action = f"commitment_{commitment.type}"
+        agent.last_rationale = commitment.accepted_because or commitment.goal
+        agent.current_plan = f"commitment: {commitment.type} -> {target_obj.name}"
+        agent.current_target_object_id = target_obj.id
+        agent.current_target_agent_id = ""
+        if agent.position.manhattan(target_obj.position) <= 1:
+            if target_obj.kind == "cave_entrance" and "rope" in agent.inventory and not target_obj.state.get("rope_anchored") and agent.needs.stress + agent.social_to_player.fear > 58:
+                execute_item_action(world, agent.id, "rope", target_obj.id, "anchor", commitment.goal)
+                return True
+            _agent_use_object(world, agent.id, target_obj.id)
+            _finish_commitment(world, agent, "succeeded", f"reached and handled {target_obj.name}")
+            agent.command_hold_turns = max(agent.command_hold_turns, 6)
+            return True
+        blocked = world.occupied_positions(exclude_agent_id=agent.id)
+        step = next_step_towards(world.grid, agent.position, target_obj.position, blocked=blocked)
+        if step:
+            agent.position = step
+            world.log(
+                "agent_commitment_move",
+                f"{agent.name} heads toward {target_obj.name} for commitment {commitment.id}.",
+                source=agent.id,
+                salience=5,
+                tags=["agent", "movement", "commitment"],
+                metadata={"agent_id": agent.id, "commitment_id": commitment.id, "target": target_obj.id},
+            )
+        else:
+            world.log("agent_obey_blocked", f"{agent.name} wants to reach {target_obj.name}, but cannot find a path.", source=agent.id, tags=["agent", "blocked", "obey"])
+        return True
+
+    return False
+
+
+def _constraint_interrupt_reason(world: WorldState, agent, commitment, obj=None) -> str:
+    if agent.health < float(commitment.constraints.get("avoid_if_health_below", -1)):
+        return f"health {agent.health:.0f} fell below commitment safety constraint"
+    stress_limit = float(commitment.constraints.get("avoid_if_stress_above", 999))
+    if agent.needs.stress > stress_limit:
+        return f"stress {agent.needs.stress:.0f} exceeded commitment safety constraint"
+    required = commitment.constraints.get("requires_item_if_stress_above")
+    if isinstance(required, dict):
+        item_id = str(required.get("item_id") or "")
+        threshold = float(required.get("stress", 999))
+        if agent.needs.stress + agent.social_to_player.fear > threshold and item_id and not has_item(world, agent.id, item_id):
+            name = obj.name if obj else "target"
+            return f"{name} now requires {item_name(item_id)} before continuing safely"
+    return ""
+
+
+def _finish_commitment(world: WorldState, agent, status: str, reason: str) -> None:
+    commitment = agent.active_commitment
+    if not commitment:
+        return
+    commitment.status = status
+    commitment.interrupt_reason = "" if status == "succeeded" else reason
+    agent.commitment_history.append(commitment)
+    agent.active_commitment = None
+    agent.following_player = False
+    agent.command_target_object_id = ""
+    agent.command_reason = ""
+    agent.command_interrupt_reason = "" if status == "succeeded" else reason
+    world.log(
+        "agent_commitment_finished",
+        f"{agent.name}'s commitment {commitment.id} {status}: {reason}.",
+        source=agent.id,
+        salience=6 if status == "succeeded" else 7,
+        tags=["agent", "decision", "commitment", status],
+        metadata={"agent_id": agent.id, "commitment_id": commitment.id, "status": status, "reason": reason},
+    )
+
+
 def _commitment_interrupt_reason(world: WorldState, agent, obj=None) -> str:
     urgent, value = agent.needs.most_urgent
     if "wounded" in agent.status_flags and agent.health < 45:
@@ -133,6 +255,11 @@ def _commitment_interrupt_reason(world: WorldState, agent, obj=None) -> str:
 
 
 def _interrupt_commitment(world: WorldState, agent, reason: str) -> None:
+    if agent.active_commitment:
+        agent.active_commitment.status = "interrupted"
+        agent.active_commitment.interrupt_reason = reason
+        agent.commitment_history.append(agent.active_commitment)
+        agent.active_commitment = None
     agent.command_interrupt_reason = reason
     agent.following_player = False
     agent.command_target_object_id = ""
@@ -154,27 +281,7 @@ def _interrupt_commitment(world: WorldState, agent, reason: str) -> None:
 
 
 def _run_world_pressure_events(world: WorldState) -> None:
-    if world.turn == 8 and "rain_squall" not in world.scripted_flags:
-        world.scripted_flags.add("rain_squall")
-        world.log(
-            "weather_rain_squall",
-            "Cold rain rolls over the camp. The fire hisses and everyone starts losing warmth.",
-            source="weather",
-            salience=9,
-            tags=["weather", "cold", "rain", "survival"],
-        )
-        campfire = world.object_by_kind("campfire")
-        shelter = world.object_by_kind("shelter")
-        for agent in world.agents.values():
-            protected = bool(
-                (campfire and agent.position.manhattan(campfire.position) <= 2)
-                or (shelter and agent.position.manhattan(shelter.position) <= 1)
-            )
-            agent.needs.fatigue += 4.0 if protected else 12.0
-            agent.needs.stress += 3.0 if protected else 10.0
-            agent.needs.clamp()
-            if not protected:
-                world.flash(agent.id, "Cold stress", "Rain made shelter and fire immediately more important.", kind="body", intensity=0.7)
+    run_storylet_director(world)
 
 
 def _maybe_start_player_conversation(world: WorldState, agent_id: str) -> None:
@@ -186,6 +293,7 @@ def _maybe_start_player_conversation(world: WorldState, agent_id: str) -> None:
     recent_tags = {tag for event in world.event_log[-8:] for tag in event.tags}
     has_reason = bool(
         agent.following_player
+        or agent.active_commitment
         or agent.command_hold_turns > 0
         or agent.needs.social > 62
         or {"cave", "danger", "conflict", "decision", "social_risk"} & recent_tags
@@ -214,11 +322,16 @@ def _initiative_line(world: WorldState, agent_id: str, recent_tags: set[str]) ->
     if recent_claims:
         claim = recent_claims[-1]
         return f"You said this: '{claim.text}' I am treating it as unverified until the world proves it."
+    if agent.active_commitment:
+        target = world.objects.get(agent.active_commitment.target_object_id) if agent.active_commitment.target_object_id else None
+        if target:
+            return f"I am still working on this: {agent.active_commitment.goal}. Target: {target.name}."
+        return f"I am still keeping my commitment: {agent.active_commitment.goal}."
     if agent.following_player:
         return "I am still with you. Tell me if this stops being a good idea."
     if agent.command_hold_turns > 0:
         return "I did what you asked. I am staying here for a moment in case you need to talk."
-    if "cave" in recent_tags and agent.id == "alice":
+    if "cave" in recent_tags and agent.traits.get("curiosity", 0.0) > 0.65:
         return "Before we move again: the cave is becoming a pattern, not just a place."
     if "conflict" in recent_tags or "social_risk" in recent_tags:
         return "We need rules before hunger starts making decisions for us."
@@ -321,6 +434,16 @@ def apply_agent_intent(world: WorldState, agent_id: str, tool_name: str, paramet
         else:
             world.log("agent_wait", f"{agent.name} reaches for their pack, then stops.", source=agent.id, tags=["agent", "item"])
         return
+    if tool_name == "use_item_on_target":
+        item_id = str(parameters.get("item_id") or "")
+        target_id = str(parameters.get("target_id") or parameters.get("object_id") or "")
+        primitive = str(parameters.get("primitive") or parameters.get("capability") or "inspect")
+        agent.current_plan = f"use_item_on_target -> {item_id or 'item'} / {target_id or 'target'}"
+        agent.current_target_object_id = target_id
+        result = execute_item_action(world, agent_id, item_id, target_id, primitive, rationale)
+        if result.ok:
+            agent.last_rationale = f"{rationale} Result: {result.message}"
+        return
     if tool_name == "move_to_object":
         object_id = parameters.get("object_id")
         obj = world.objects.get(object_id) if object_id else None
@@ -391,10 +514,7 @@ def _agent_use_object(world: WorldState, agent_id: str, object_id: str) -> None:
             world.log("agent_inspect_object", f"{agent.name} checks the opened supply box.", source=agent.id, tags=["agent", "inspect", "supplies"])
             return
         if "knife" in agent.inventory:
-            obj.state["open"] = True
-            add_item(world, agent.id, "ration")
-            add_item(world, agent.id, "rope")
-            world.log("agent_open_box", f"{agent.name} pries open {obj.name} and takes a ration and rope.", source=agent.id, salience=8, tags=["agent", "item", "supplies", "tool"])
+            execute_item_action(world, agent.id, "knife", obj.id, "pry", "agent reached lockbox")
             return
         world.log("agent_locked_box", f"{agent.name} studies {obj.name}. They need a sharp tool to open it.", source=agent.id, tags=["agent", "locked", "supplies"])
         return

@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from mozok_game.engine.inventory import choose_item_for_agent_need, item_name
+from mozok_game.engine.capabilities import target_primitives
+from mozok_game.engine.inventory import choose_item_for_agent_need, item_capabilities, item_name
 from mozok_game.engine.models import Agent, AgentIntent, WorldEvent, WorldObject
 from mozok_game.engine.world_state import WorldState
 
@@ -42,6 +43,7 @@ def build_agent_affordances(world: WorldState, agent: Agent, recent_events: list
         Affordance("wait", "wait and observe", 8.0, {}, "no higher-priority affordance won"),
     ]
     affordances.extend(_need_affordances(world, agent))
+    affordances.extend(_item_capability_affordances(world, agent))
     affordances.extend(_claim_affordances(world, agent))
     affordances.extend(_inventory_affordances(world, agent))
     affordances.extend(_social_affordances(world, agent, recent_events))
@@ -153,6 +155,54 @@ def _inventory_affordances(world: WorldState, agent: Agent) -> list[Affordance]:
                     dialogue=f"{agent.name}: {other.name}, take this {item_name(needed)}. You need it more than I do.",
                 )
             )
+    return result
+
+
+def _item_capability_affordances(world: WorldState, agent: Agent) -> list[Affordance]:
+    result: list[Affordance] = []
+    for item_id in set(agent.inventory):
+        capabilities = item_capabilities(item_id)
+        if "anchor" in capabilities:
+            cave = world.object_by_kind("cave_entrance")
+            if cave and not cave.state.get("rope_anchored"):
+                cave_salience = world.pressure.get("mystery", 0.0) + world.pressure.get("danger", 0.0)
+                stress = agent.needs.stress + agent.social_to_player.fear
+                if cave_salience > 0.08 or stress > 60:
+                    result.append(
+                        Affordance(
+                            "use_item_on_target",
+                            "anchor rope at cave",
+                            58.0 + cave_salience * 90.0 + min(24.0, stress * 0.18),
+                            {"item_id": item_id, "target_id": cave.id, "primitive": "anchor"},
+                            f"{item_name(item_id)} can reduce cave risk before investigation",
+                        )
+                    )
+        if "pry" in capabilities:
+            for obj in world.objects.values():
+                if obj.state.get("open") or "pry" not in target_primitives(obj):
+                    continue
+                if obj.kind == "locked_supply_box":
+                    result.append(
+                        Affordance(
+                            "use_item_on_target",
+                            f"pry open {obj.name}",
+                            72.0,
+                            {"item_id": item_id, "target_id": obj.id, "primitive": "pry"},
+                            f"{item_name(item_id)} supports pry and {obj.name} is locked",
+                        )
+                    )
+        if "test" in capabilities:
+            berries = world.object_by_kind("poisonous_berries")
+            if berries and not berries.state.get("tested_poisonous") and int(berries.state.get("berries", 0)) > 0:
+                result.append(
+                    Affordance(
+                        "use_item_on_target",
+                        "test suspicious berries",
+                        42.0 + world.pressure.get("scarcity", 0.0) * 35.0,
+                        {"item_id": item_id, "target_id": berries.id, "primitive": "test"},
+                        f"{item_name(item_id)} can test uncertain food before anyone eats it",
+                    )
+                )
     return result
 
 
@@ -303,11 +353,11 @@ def _object_from_claim(world: WorldState, text: str) -> WorldObject | None:
 
 
 def _player_line(agent: Agent, tags: set[str]) -> str:
-    if "cave" in tags and agent.id == "alice":
+    if "cave" in tags and agent.traits.get("curiosity", 0.0) > 0.65:
         return f"{agent.name}: I need to say this before we move again: the cave is becoming a hypothesis, not just a place."
-    if "food" in tags and agent.id == "boris":
+    if "food" in tags and (agent.traits.get("dominance", 0.0) > 0.6 or "control" in agent.values):
         return f"{agent.name}: We need an explicit rule about the crate before hunger writes one for us."
-    if "danger" in tags and agent.id == "mira":
+    if "danger" in tags and (agent.traits.get("empathy", 0.0) > 0.65 or agent.traits.get("caution", 0.0) > 0.65):
         return f"{agent.name}: I need everyone close enough to hear each other. That is not panic; that is medicine."
     return f"{agent.name}: Can we talk for a moment? I do not want silence making the decisions."
 

@@ -4,8 +4,9 @@ import math
 from pathlib import Path
 from typing import Any
 
-from mozok_game.engine.inventory import inventory_label
+from mozok_game.engine.inventory import inventory_label, item_capabilities, item_name
 from mozok_game.engine.models import Agent, Position, WorldObject
+from mozok_game.engine.pressure import pressure_summary
 from mozok_game.engine.world_state import WorldState
 from mozok_game.ui.art_assets import ArtAssets
 
@@ -628,7 +629,10 @@ class Renderer:
         self.pygame.draw.rect(self.screen, EMOTION_COLOURS.get(agent.emotion, PAPER), avatar_rect, width=2, border_radius=4)
         self._draw_party_stat(rect.x + 8, rect.y + 94, rect.w - 16, "HP", agent.health, (190, 56, 52))
         self._draw_party_stat(rect.x + 8, rect.y + 112, rect.w - 16, "TR", agent.social_to_player.trust, (65, 142, 205))
-        if agent.following_player:
+        if agent.active_commitment:
+            label = "FOLLOW" if agent.active_commitment.type == "follow" else "TASK"
+            self._line(rect.x + 76, rect.y + 94, label, (255, 241, 166), self.tiny)
+        elif agent.following_player:
             self._line(rect.x + 76, rect.y + 94, "FOLLOW", (255, 241, 166), self.tiny)
         elif agent.command_target_object_id:
             self._line(rect.x + 76, rect.y + 94, "TASK", (255, 241, 166), self.tiny)
@@ -709,6 +713,9 @@ class Renderer:
         if agent.command_target_object_id:
             obj = world.objects.get(agent.command_target_object_id)
             return f"Target object: {obj.name if obj else agent.command_target_object_id}"
+        if agent.active_commitment and agent.active_commitment.target_object_id:
+            obj = world.objects.get(agent.active_commitment.target_object_id)
+            return f"Commit target: {obj.name if obj else agent.active_commitment.target_object_id}"
         return ""
 
     def _draw_dialogue_menu(self, world: WorldState, dialogue_menu: dict) -> None:
@@ -840,6 +847,15 @@ class Renderer:
         lines: list[tuple[str, str]] = []
         lines.append(("header", "Profile"))
         lines.append(("body", f"{agent.role}. Personality: {agent.personality}"))
+        if agent.traits:
+            top_traits = sorted(agent.traits.items(), key=lambda item: item[1], reverse=True)[:5]
+            lines.append(("body", "Traits: " + ", ".join(f"{name} {value:.2f}" for name, value in top_traits)))
+        if agent.values:
+            lines.append(("body", "Values: " + ", ".join(agent.values[:5])))
+        if agent.fears:
+            lines.append(("body", "Fears: " + ", ".join(agent.fears[:5])))
+        if agent.skills:
+            lines.append(("body", "Skills: " + ", ".join(agent.skills[:5])))
         flags = ", ".join(agent.status_flags) if agent.status_flags else "none"
         lines.append(("body", f"Emotion: {agent.emotion} intensity {agent.emotion_intensity:.2f}. Health {agent.health:.0f}. Status: {flags}. Current goal: {agent.current_goal.replace('_', ' ')}."))
         lines.append(("subtle", f"Position {agent.position.x},{agent.position.y}. Last action: {agent.last_action}."))
@@ -861,6 +877,7 @@ class Renderer:
             lines.append(("body", f"Last interruption: {agent.command_interrupt_reason}"))
 
         lines.append(("header", "Working Thought"))
+        lines.append(("body", f"World pressure: {pressure_summary(world.pressure)}"))
         lines.append(("body", f"Current plan: {agent.current_plan}"))
         target_line = self._agent_target_line(world, agent)
         if target_line:
@@ -874,6 +891,10 @@ class Renderer:
 
         lines.append(("header", "Inventory"))
         lines.append(("body", inventory_label(agent.inventory)))
+        for item_id in sorted(set(agent.inventory)):
+            caps = ", ".join(sorted(item_capabilities(item_id))[:8])
+            if caps:
+                lines.append(("subtle", f"{item_name(item_id)}: {caps}"))
 
         lines.append(("header", "Known Memories"))
         if agent.memory_snippets:
@@ -983,6 +1004,17 @@ class Renderer:
         return {1: 1.0, 2: 0.72, 3: 0.52, 4: 0.38, 5: 0.28}[depth]
 
     def _agent_commitment_line(self, agent: Agent) -> str:
+        if agent.active_commitment:
+            commitment = agent.active_commitment
+            parts = [f"{agent.name} commitment: {commitment.type}"]
+            if commitment.goal:
+                parts.append(commitment.goal)
+            if commitment.target_object_id:
+                parts.append(f"target={commitment.target_object_id}")
+            if commitment.constraints:
+                concise = ", ".join(f"{key}={value}" for key, value in list(commitment.constraints.items())[:3])
+                parts.append(f"constraints: {concise}")
+            return ". ".join(parts) + "."
         if agent.following_player:
             return f"{agent.name} agreed to follow you. They will try to stay on a neighbouring tile."
         if agent.command_target_object_id:

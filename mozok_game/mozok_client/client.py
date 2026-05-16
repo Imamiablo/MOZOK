@@ -53,11 +53,11 @@ class OfflineMozokBrain:
         recent = world.event_log[-1].content if world.event_log else "the island is quiet"
         group = ", ".join(name for name in participant_names if name != agent.name)
         group_hint = f" I know {group} can hear this." if group else ""
-        if agent.id == "alice":
+        if agent.traits.get("curiosity", 0.0) > 0.65:
             reply = f"I keep mapping your question back to the cave. {recent}.{group_hint}"
-        elif agent.id == "boris":
+        elif agent.traits.get("dominance", 0.0) > 0.65:
             reply = f"My answer is practical: count supplies, count risks, then talk. You asked: {message[:80]}.{group_hint}"
-        elif agent.id == "mira":
+        elif agent.traits.get("empathy", 0.0) > 0.65:
             reply = f"I hear you. But I am watching everyone's stress while we talk. {recent}.{group_hint}"
         else:
             reply = f"I heard you: {message}"
@@ -84,6 +84,7 @@ class MozokHttpClient:
         self.timeout = float(os.getenv("MOZOK_GAME_API_TIMEOUT", "4.0"))
         self.fallback = OfflineMozokBrain()
         self.last_status = f"MOZOK API mode enabled: {self.base_url}"
+        self._posted_event_ids: set[str] = set()
 
     def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
         try:
@@ -152,6 +153,14 @@ class MozokHttpClient:
                         "tags": ["item", "inventory", "use", "medical", "food"],
                     },
                     {
+                        "name": "use_item_on_target",
+                        "description": "Use an inventory item's capability on an existing world object. Parameters must include item_id, target_id, and primitive such as pry, anchor, inspect, test, cut, repair, or block.",
+                        "action_kind": "game_command",
+                        "risk_level": "medium",
+                        "requires_approval": False,
+                        "tags": ["item", "capability", "tool", "validated", "pry", "anchor", "inspect", "test"],
+                    },
+                    {
                         "name": "wait",
                         "description": "Wait and observe the camp when no useful action is available.",
                         "action_kind": "no_op",
@@ -171,6 +180,7 @@ class MozokHttpClient:
                     "position": asdict(agent.position),
                     "target_hint": target_hint.id if target_hint else None,
                     "affordances": serialise_affordances(affordances),
+                    "authoritative_state": world.export_authoritative_state(),
                 },
             }
             response = requests.post(f"{self.base_url}/agents/{agent.id}/tick", json=payload, timeout=self.timeout)
@@ -313,11 +323,15 @@ class MozokHttpClient:
             return self.fallback.interpret_speech(world, agent, message)
 
     def _post_world_event(self, world: WorldState, agent: Agent, event: WorldEvent) -> None:
+        post_key = f"{agent.id}:{event.event_id}"
+        if post_key in self._posted_event_ids:
+            return
         payload = {
             "events": [
                 {
                     "world_id": "island_demo",
                     "agent_id": agent.id,
+                    "event_id": event.event_id,
                     "event_type": event.event_type,
                     "content": event.content,
                     "source": event.source,
@@ -333,10 +347,14 @@ class MozokHttpClient:
         response = requests.post(f"{self.base_url}/world-events", json=payload, timeout=min(self.timeout, 2.0))
         if response.status_code >= 400:
             raise RuntimeError(f"world-events HTTP {response.status_code}: {response.text[:120]}")
+        self._posted_event_ids.add(post_key)
+        if len(self._posted_event_ids) > 500:
+            self._posted_event_ids = set(list(self._posted_event_ids)[-250:])
 
     def _event_to_perception(self, event: WorldEvent) -> dict[str, Any]:
         return {
             "content": event.content,
+            "event_id": event.event_id,
             "event_type": event.event_type,
             "source": event.source,
             "channel_hint": self._channel_for_event(event),
@@ -350,6 +368,7 @@ class MozokHttpClient:
         return {
             "channel": self._channel_for_event(event),
             "content": event.content,
+            "event_id": event.event_id,
             "intensity": max(0.1, min(10.0, event.salience)),
             "attention": max(0.1, min(10.0, event.salience)),
             "confidence": 1.0,
@@ -400,7 +419,7 @@ class MozokHttpClient:
                 emotion=agent.emotion,
                 rationale=f"MOZOK API: {rationale}",
             )
-        if tool_name in {"give_item", "use_inventory_item"}:
+        if tool_name in {"give_item", "use_inventory_item", "use_item_on_target"}:
             return AgentIntent(
                 agent_id=agent.id,
                 action_kind="game_command",
@@ -420,7 +439,7 @@ class MozokHttpClient:
                 emotion=agent.emotion,
                 rationale=f"MOZOK API: {rationale}",
             )
-        if tool_name not in {"move_to_object", "wait", "give_item", "use_inventory_item"}:
+        if tool_name not in {"move_to_object", "wait", "give_item", "use_inventory_item", "use_item_on_target"}:
             tool_name = "wait"
         return AgentIntent(
             agent_id=agent.id,
@@ -433,7 +452,7 @@ class MozokHttpClient:
         )
 
     def _apply_intent_trace(self, world: WorldState, agent: Agent, intent: AgentIntent) -> None:
-        object_id = str(intent.parameters.get("object_id") or "")
+        object_id = str(intent.parameters.get("object_id") or intent.parameters.get("target_id") or "")
         target_agent_id = str(intent.parameters.get("target_agent_id") or "")
         agent.current_target_object_id = object_id
         agent.current_target_agent_id = target_agent_id

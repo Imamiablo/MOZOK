@@ -4,7 +4,7 @@ from mozok_game.engine.director import apply_dialogue_choice, build_dialogue_opt
 from mozok_game.engine.affordances import choose_offline_intent
 from mozok_game.engine.models import Position
 from mozok_game.engine.speech_actions import apply_agent_decision, decide_agent_response, fallback_interpret_player_speech, parsed_speech_from_dict, record_player_claims
-from mozok_game.engine.tick_scheduler import apply_agent_intent
+from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import load_world
 from mozok_game.mozok_client.client import OfflineMozokBrain
 
@@ -68,6 +68,8 @@ def test_follow_request_creates_agent_commitment():
 
     assert decision.accepted
     assert mira.following_player
+    assert mira.active_commitment is not None
+    assert mira.active_commitment.type == "follow"
     assert mira.brain_focus == "Following the player by choice."
 
 
@@ -134,8 +136,12 @@ def test_player_following_agent_is_not_recorded_as_suspicious_claim():
     world = load_world(base_dir())
     mira = world.agents["mira"]
     cave = world.objects["cave_01"]
-    mira.command_target_object_id = cave.id
-    mira.command_reason = "accepted destination request for Cave Entrance"
+    go_parsed = parsed_speech_from_dict(
+        "Please check the cave.",
+        {"speech_acts": [{"type": "request", "action": "go_to_object", "object_kind": "cave_entrance", "confidence": 0.9}]},
+    )
+    go_decision = decide_agent_response(world, mira, go_parsed)
+    apply_agent_decision(world, mira, go_parsed, go_decision)
 
     parsed = parsed_speech_from_dict(
         "Okay, I am going after you.",
@@ -152,6 +158,7 @@ def test_player_following_agent_is_not_recorded_as_suspicious_claim():
     assert not world.claim_log
     assert decision.action == "acknowledge_player_commitment"
     assert mira.command_target_object_id == cave.id
+    assert mira.active_commitment is not None
     assert "Cave Entrance" in decision.reply
 
 
@@ -185,3 +192,14 @@ def test_talk_to_agent_intent_creates_agent_conversation():
     assert world.chat_log[-1].speaker_id == "alice"
     assert world.event_log[-1].event_type == "agent_agent_dialogue"
     assert world.event_log[-1].metadata["listener_id"] == "boris"
+
+
+def test_storylet_director_uses_pressure_not_fixed_turn():
+    world = load_world(base_dir())
+    world.turn = 6
+
+    run_agent_ticks(world, OfflineMozokBrain())
+
+    assert "rain_squall" in world.scripted_flags
+    assert any(event.event_type == "weather_rain_squall" for event in world.event_log)
+    assert world.pressure["exhaustion"] > 0

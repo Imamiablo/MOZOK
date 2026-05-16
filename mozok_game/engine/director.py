@@ -18,15 +18,15 @@ def update_cognitive_trace(world: WorldState, agent: Agent, tool_name: str, rati
     urgent, urgent_value = agent.needs.most_urgent
     memory = _pick_memory(agent, tags)
 
-    if "cave" in tags and agent.id == "alice":
+    if "cave" in tags and agent.traits.get("curiosity", 0.0) > 0.65:
         focus = "Cave signal is competing for attention."
         score = 0.91
         risk = "mystery"
-    elif "food" in tags and agent.id == "boris":
+    elif "food" in tags and (agent.traits.get("dominance", 0.0) > 0.6 or "control" in agent.values):
         focus = "Supply trust is under pressure."
         score = 0.88
         risk = "social"
-    elif "danger" in tags and agent.id == "mira":
+    elif "danger" in tags and (agent.traits.get("empathy", 0.0) > 0.65 or agent.traits.get("caution", 0.0) > 0.65):
         focus = "Group safety feels fragile."
         score = 0.86
         risk = "high"
@@ -78,7 +78,7 @@ def build_dialogue_options(world: WorldState, agent: Agent) -> list[dict[str, st
         {"id": "intent", "label": "Ask what they plan"},
     ]
     tags = _recent_tags(world)
-    if agent.id == "boris" and "food" in tags:
+    if agent.traits.get("dominance", 0.0) > 0.6 and "food" in tags:
         options.append({"id": "challenge", "label": "Challenge him about supplies"})
     elif agent.emotion in {"afraid", "tired"} or agent.needs.stress > 50:
         options.append({"id": "reassure", "label": "Reassure them"})
@@ -128,50 +128,52 @@ def apply_dialogue_choice(world: WorldState, agent: Agent, choice_id: str) -> st
 
 def trigger_scripted_moment(world: WorldState, moment_id: str) -> None:
     if moment_id == "food_taken":
-        boris = world.agents.get("boris")
+        controller = _best_agent(world, lambda agent: agent.traits.get("dominance", 0.0) + agent.traits.get("caution", 0.0) + agent.social_to_player.resentment / 120.0)
         crate = world.objects.get("food_crate_01")
-        if not boris:
+        if not controller:
             return
-        boris.social_to_player.resentment += 7.0
-        boris.social_to_player.trust -= 2.0
-        boris.social_to_player.clamp()
+        controller.social_to_player.resentment += 7.0
+        controller.social_to_player.trust -= 2.0
+        controller.social_to_player.clamp()
         food_left = int((crate.state or {}).get("food", 0)) if crate else 0
-        if "food_taken_boris_flash" not in world.scripted_flags:
-            world.scripted_flags.add("food_taken_boris_flash")
-            world.flash("boris", "Memory check", "Boris counted four rations before dusk.", kind="memory", intensity=0.9)
+        flag = f"food_taken_{controller.id}_flash"
+        if flag not in world.scripted_flags:
+            world.scripted_flags.add(flag)
+            memory = _pick_memory(controller, {"food"}) or "The ration count changed, and somebody noticed."
+            world.flash(controller.id, "Memory check", memory, kind="memory", intensity=0.9)
             world.log(
-                "scripted_boris_supply_warning",
-                "Boris looks at the crate, then at your hands. He says nothing yet.",
-                source="boris",
+                "storylet_supply_warning",
+                f"{controller.name} looks at the crate, then at your hands. They say nothing yet.",
+                source=controller.id,
                 salience=8,
                 tags=["agent", "food", "conflict", "memory"],
-                metadata={"agent_id": "boris"},
+                metadata={"agent_id": controller.id},
             )
         elif food_left <= 1:
-            world.flash("boris", "Social risk", "The ration count is close to becoming an accusation.", kind="risk", intensity=0.86)
+            world.flash(controller.id, "Social risk", "The ration count is close to becoming an accusation.", kind="risk", intensity=0.86)
         return
 
     if moment_id == "cave_inspected" and "cave_first_click" not in world.scripted_flags:
         world.scripted_flags.add("cave_first_click")
-        alice = world.agents.get("alice")
-        mira = world.agents.get("mira")
-        if alice:
-            alice.needs.curiosity += 12.0
-            alice.needs.stress += 4.0
-            alice.needs.clamp()
-            world.flash("alice", "Memory resonance", "The cave clicked after sunset. Now it answered again.", kind="memory", intensity=0.95)
+        curious = _best_agent(world, lambda agent: agent.traits.get("curiosity", 0.0) + agent.needs.curiosity / 130.0)
+        protector = _best_agent(world, lambda agent: agent.traits.get("empathy", 0.0) + agent.traits.get("caution", 0.0) + agent.needs.stress / 160.0)
+        if curious:
+            curious.needs.curiosity += 12.0
+            curious.needs.stress += 4.0
+            curious.needs.clamp()
+            world.flash(curious.id, "Memory resonance", "The cave clicked after sunset. Now it answered again.", kind="memory", intensity=0.95)
             world.log(
-                "scripted_alice_cave_theory",
-                "Alice whispers: It is responding to attention, not time.",
-                source="alice",
+                "storylet_cave_theory",
+                f"{curious.name} whispers: It is responding to attention, not time.",
+                source=curious.id,
                 salience=9,
                 tags=["agent", "cave", "dialogue", "mystery"],
-                metadata={"agent_id": "alice"},
+                metadata={"agent_id": curious.id},
             )
-        if mira:
-            mira.needs.stress += 10.0
-            mira.needs.clamp()
-            world.flash("mira", "Threat model", "Unknown cave signal raises group-safety risk.", kind="risk", intensity=0.82)
+        if protector:
+            protector.needs.stress += 10.0
+            protector.needs.clamp()
+            world.flash(protector.id, "Threat model", "Unknown cave signal raises group-safety risk.", kind="risk", intensity=0.82)
         return
 
     if moment_id == "radio_inspected" and "radio_first_signal" not in world.scripted_flags:
@@ -188,6 +190,13 @@ def trigger_scripted_moment(world: WorldState, moment_id: str) -> None:
             agent.needs.curiosity += 5.0
             agent.needs.clamp()
             world.flash(agent.id, "Sensory spike", "The radio signal felt personally addressed.", kind="perception", intensity=0.8)
+
+
+def _best_agent(world: WorldState, scorer) -> Agent | None:
+    agents = [agent for agent in world.agents.values() if agent.alive]
+    if not agents:
+        return None
+    return max(agents, key=scorer)
 
 
 def run_social_director(world: WorldState) -> None:
@@ -263,32 +272,37 @@ def _nearby_pairs(world: WorldState) -> list[tuple[Agent, Agent]]:
 
 def _choose_pair(pairs: list[tuple[Agent, Agent]], tags: set[str]) -> tuple[Agent | None, Agent | None]:
     for left, right in pairs:
-        ids = {left.id, right.id}
-        if "food" in tags and "boris" in ids:
-            return (left, right) if left.id == "boris" else (right, left)
-        if "cave" in tags and "alice" in ids:
-            return (left, right) if left.id == "alice" else (right, left)
-        if "danger" in tags and "mira" in ids:
-            return (left, right) if left.id == "mira" else (right, left)
+        if "food" in tags:
+            speaker = max((left, right), key=lambda agent: agent.traits.get("dominance", 0.0) + agent.traits.get("caution", 0.0))
+            if speaker.traits.get("dominance", 0.0) > 0.5:
+                return (speaker, right if speaker is left else left)
+        if "cave" in tags:
+            speaker = max((left, right), key=lambda agent: agent.traits.get("curiosity", 0.0))
+            if speaker.traits.get("curiosity", 0.0) > 0.5:
+                return (speaker, right if speaker is left else left)
+        if "danger" in tags:
+            speaker = max((left, right), key=lambda agent: agent.traits.get("empathy", 0.0) + agent.traits.get("caution", 0.0))
+            if speaker.traits.get("empathy", 0.0) > 0.5 or speaker.traits.get("caution", 0.0) > 0.5:
+                return (speaker, right if speaker is left else left)
     return pairs[0] if pairs else (None, None)
 
 
 def _agent_to_agent_line(speaker: Agent, listener: Agent, tags: set[str]) -> str:
-    if speaker.id == "boris" and "food" in tags:
+    if speaker.traits.get("dominance", 0.0) > 0.6 and "food" in tags:
         return "Nobody touches the crate without saying it out loud first."
-    if speaker.id == "alice" and "cave" in tags:
+    if speaker.traits.get("curiosity", 0.0) > 0.65 and "cave" in tags:
         return "If the cave responds to us, then it is part of the conversation."
-    if speaker.id == "mira" and ("danger" in tags or "sound" in tags):
+    if speaker.traits.get("empathy", 0.0) > 0.65 and ("danger" in tags or "sound" in tags):
         return "Closer to the fire. I am not treating panic in the dark."
     urgent, value = speaker.needs.most_urgent
     return f"I cannot ignore {urgent} much longer. It is at {value:.0f}."
 
 
 def _theory_for(agent: Agent) -> str:
-    if agent.id == "alice":
+    if agent.traits.get("curiosity", 0.0) > 0.75:
         return "The island feels designed. Not haunted. Designed."
-    if agent.id == "boris":
+    if agent.traits.get("dominance", 0.0) > 0.65:
         return "The first real monster here will be bad accounting."
-    if agent.id == "mira":
+    if agent.traits.get("empathy", 0.0) > 0.65:
         return "The island is pushing us apart. That is how people get hurt."
     return "Something here is arranging pressure on purpose."

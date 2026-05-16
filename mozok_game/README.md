@@ -123,10 +123,22 @@ Each agent now builds a short list of possible actions before acting:
 - talk to another nearby agent to coordinate or challenge a concern
 - give an item to another agent when hunger, wounds, or trust make it useful
 - use carried inventory items such as rations or medkits
+- use an item's capability on an existing world object, such as `knife/pry/lockbox` or `rope/anchor/cave`
 - investigate mystery objects when curiosity beats fear
 - wait when nothing else is worth doing
 
-The game engine still owns movement and world validation. MOZOK or the offline brain chooses from these affordances, then the tick scheduler applies the result. Press `I` in-game to open an agent dossier with their current goal, active target object or agent, commitment, deliberation summary, inventory, remembered claims, memory snippets, and recent dialogue.
+The game engine still owns movement and world validation. MOZOK or the offline brain chooses from these affordances, then the tick scheduler applies the result. Press `I` in-game to open an agent dossier with their current goal, traits, values, fears, active target object or agent, commitment, deliberation summary, item capabilities, remembered claims, memory snippets, and recent dialogue.
+
+## Simulation Core Pass
+
+The sandbox now has the first version of the generic simulation architecture:
+
+- character cards: traits, values, fears, skills, and personality are loaded from scenario data
+- item capability layer: items expose primitives like `consume`, `pry`, `anchor`, `inspect`, `test`, `give`, and `trade`
+- commitment objects: accepted player requests become active task records with type, target, constraints, expiry, and history
+- pressure field: events move axes such as scarcity, danger, mystery, instability, authority, dependency, and exhaustion
+- storylet deck: the cold rain event is condition-driven instead of fixed to one turn
+- authoritative state export: physical state stays owned by the game and is sent to MOZOK as structured context
 
 ## Items And World Pressure
 
@@ -138,10 +150,10 @@ The island now includes a first item/pressure pass:
 - medkit
 - torn journal page
 - locked supply box
-- cold rain event
+- pressure-driven cold rain storylet
 - wounded agent state
 
-Items can sit in the player inventory or an agent inventory. The player can pick up objects with `E`, give with `G`, and request with `R`. Agents can also pick up, use, and share items through their autonomous deliberation loop.
+Items can sit in the player inventory or an agent inventory. The player can pick up objects with `E`, give with `G`, and request with `R`. Agents can also pick up, use, and share items through their autonomous deliberation loop. New scenario items should be described with tags, capabilities, and properties rather than one-off scripted pairings.
 
 ## What to show in a demo
 

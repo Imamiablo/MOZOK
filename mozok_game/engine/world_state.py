@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from mozok_game.engine.map_grid import MapGrid
 from mozok_game.engine.models import Agent, BrainFlash, ChatLine, ClaimRecord, Needs, Player, Position, SocialState, WorldEvent, WorldObject
+from mozok_game.engine.pressure import apply_event_pressure, default_pressure_field
 
 
 @dataclass
@@ -22,22 +23,30 @@ class WorldState:
     chat_log: list[ChatLine] = field(default_factory=list)
     claim_log: list[ClaimRecord] = field(default_factory=list)
     scripted_flags: set[str] = field(default_factory=set)
+    pressure: dict[str, float] = field(default_factory=default_pressure_field)
+    event_counter: int = 0
     last_agent_conversation_turn: int = -99
     selected_agent_id: str | None = None
     last_message: str = "Welcome to Island Camp. Something moved near the cave."
 
     def log(self, event_type: str, content: str, source: str = "game", salience: float = 5.0, tags: list[str] | None = None, metadata: dict[str, Any] | None = None) -> WorldEvent:
+        self.event_counter += 1
+        event_id = f"evt_{self.turn:04d}_{self.event_counter:05d}"
+        event_metadata = dict(metadata or {})
+        event_metadata.setdefault("event_id", event_id)
         event = WorldEvent(
+            event_id=event_id,
             turn=self.turn,
             event_type=event_type,
             content=content,
             source=source,
             salience=salience,
             tags=tags or [],
-            metadata=metadata or {},
+            metadata=event_metadata,
         )
         self.event_log.append(event)
         self.event_log = self.event_log[-80:]
+        apply_event_pressure(self.pressure, event)
         self.last_message = content
         return event
 
@@ -134,6 +143,49 @@ class WorldState:
                 return obj
         return None
 
+    def export_authoritative_state(self) -> dict[str, Any]:
+        return {
+            "turn": self.turn,
+            "player": {
+                "position": {"x": self.player.position.x, "y": self.player.position.y},
+                "inventory": list(self.player.inventory),
+                "health": self.player.health,
+                "hunger": self.player.hunger,
+                "thirst": self.player.thirst,
+                "fatigue": self.player.fatigue,
+            },
+            "agents": {
+                agent_id: {
+                    "name": agent.name,
+                    "position": {"x": agent.position.x, "y": agent.position.y},
+                    "health": agent.health,
+                    "inventory": list(agent.inventory),
+                    "status_flags": list(agent.status_flags),
+                    "needs": {
+                        "hunger": agent.needs.hunger,
+                        "thirst": agent.needs.thirst,
+                        "fatigue": agent.needs.fatigue,
+                        "stress": agent.needs.stress,
+                        "social": agent.needs.social,
+                        "curiosity": agent.needs.curiosity,
+                    },
+                    "active_commitment": asdict(agent.active_commitment) if agent.active_commitment else None,
+                }
+                for agent_id, agent in self.agents.items()
+            },
+            "objects": {
+                object_id: {
+                    "name": obj.name,
+                    "kind": obj.kind,
+                    "position": {"x": obj.position.x, "y": obj.position.y},
+                    "tags": list(obj.tags),
+                    "state": dict(obj.state),
+                }
+                for object_id, obj in self.objects.items()
+            },
+            "pressure": dict(self.pressure),
+        }
+
 
 def _pos(raw: list[int] | tuple[int, int]) -> Position:
     return Position(int(raw[0]), int(raw[1]))
@@ -153,6 +205,11 @@ def load_world(base_dir: Path) -> WorldState:
             position=_pos(item["position"]),
             avatar_folder=item.get("avatar_folder", item["id"]),
             personality=item.get("personality", "survivor"),
+            traits={key: float(value) for key, value in dict(item.get("traits", {})).items()},
+            values=list(item.get("values", [])),
+            fears=list(item.get("fears", [])),
+            skills=list(item.get("skills", [])),
+            action_biases={key: float(value) for key, value in dict(item.get("action_biases", {})).items()},
             needs=Needs(**item.get("needs", {})),
             social_to_player=SocialState(**item.get("social_to_player", {})),
             emotion=item.get("emotion", "neutral"),

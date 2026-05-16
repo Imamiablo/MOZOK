@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from mozok_game.engine.capabilities import execute_item_action
 from mozok_game.engine.director import trigger_scripted_moment
 from mozok_game.engine.inventory import add_item, has_item, item_name
 from mozok_game.engine.models import Agent, WorldObject
@@ -25,7 +26,9 @@ def interact_with_object(world: WorldState, obj: WorldObject) -> None:
         world.log("player_take_item", f"You pick up {item_name(item_id)}.", tags=["item", "inventory", obj.kind], metadata={"item_id": item_id, "object_id": obj.id})
         if obj.kind == "journal_page":
             world.claim("journal_page", "group", "A torn journal page says the cave machinery wakes when people gather near it.", truth_status="verified", confidence=0.85, object="cave_entrance", claim_type="evidence", target_object_id="cave_01")
-            world.flash("alice", "Evidence", "The journal page suggests the cave reacts to groups, not time.", kind="belief", intensity=0.82)
+            curious = max(world.agents.values(), key=lambda agent: agent.traits.get("curiosity", 0.0), default=None)
+            if curious:
+                world.flash(curious.id, "Evidence", "The journal page suggests the cave reacts to groups, not time.", kind="belief", intensity=0.82)
         return
     if obj.kind == "poisonous_berries":
         amount = int(obj.state.get("berries", 3))
@@ -43,10 +46,7 @@ def interact_with_object(world: WorldState, obj: WorldObject) -> None:
         if not has_item(world, "player", "knife"):
             world.log("box_locked", f"{obj.name} is locked. A sharp tool might pry it open.", tags=["item", "locked", "supplies"])
             return
-        obj.state["open"] = True
-        add_item(world, "player", "ration")
-        add_item(world, "player", "rope")
-        world.log("box_opened", f"You pry open {obj.name} with the knife. Inside: a ration and rope.", salience=8, tags=["item", "supplies", "tool"], metadata={"used_item": "knife"})
+        execute_item_action(world, "player", "knife", obj.id, "pry", "player interact")
         return
     if obj.kind == "water_source":
         world.player.thirst = max(0.0, world.player.thirst - 40.0)
@@ -92,11 +92,11 @@ def talk_to_agent(world: WorldState, agent: Agent) -> None:
     agent.social_to_player.clamp()
     recent_tags = {tag for event in world.event_log[-8:] for tag in event.tags}
     memory = agent.memory_snippets[0] if agent.memory_snippets else ""
-    if agent.id == "boris" and ("food" in recent_tags or agent.social_to_player.resentment > 25):
+    if agent.traits.get("dominance", 0.0) > 0.6 and ("food" in recent_tags or agent.social_to_player.resentment > 25):
         line = f"{agent.name}: I remember the crate count. Supplies are trust with a lid on it."
-    elif agent.id == "alice" and ("cave" in recent_tags or agent.needs.curiosity > 65):
+    elif agent.traits.get("curiosity", 0.0) > 0.65 and ("cave" in recent_tags or agent.needs.curiosity > 65):
         line = f"{agent.name}: The cave keeps answering us in clicks. That is not geology."
-    elif agent.id == "mira" and ("danger" in recent_tags or agent.needs.stress > 55):
+    elif agent.traits.get("empathy", 0.0) > 0.65 and ("danger" in recent_tags or agent.needs.stress > 55):
         line = f"{agent.name}: Stay where I can see you. People vanish when groups pretend they are fine."
     elif agent.emotion == "afraid":
         line = f"{agent.name}: Please tell me you heard that too. I don't want to be the only one scared."

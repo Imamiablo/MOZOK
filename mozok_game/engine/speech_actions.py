@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from mozok_game.engine.models import Agent, WorldObject
+from mozok_game.engine.models import Agent, Commitment, WorldObject
 from mozok_game.engine.world_state import WorldState
 
 
@@ -226,14 +226,15 @@ def apply_agent_decision(world: WorldState, agent: Agent, parsed: ParsedSpeech, 
     if not decision.handled:
         return
     if decision.action == "follow_player" and decision.accepted:
-        agent.following_player = True
-        agent.command_target_object_id = ""
-        agent.command_reason = decision.reason
-        agent.command_source = "player"
-        agent.command_priority = 72.0
-        agent.command_started_turn = world.turn
-        agent.command_interrupt_reason = ""
-        agent.command_hold_turns = 0
+        _start_commitment(
+            world,
+            agent,
+            commitment_type="follow",
+            priority=72.0,
+            goal="follow the player while conditions remain acceptable",
+            constraints={"stay_within_distance": 2, "avoid_if_health_below": 35, "avoid_if_stress_above": 96},
+            accepted_because=decision.reason,
+        )
         agent.current_plan = "follow player"
         agent.current_target_object_id = ""
         agent.current_target_agent_id = ""
@@ -243,19 +244,30 @@ def apply_agent_decision(world: WorldState, agent: Agent, parsed: ParsedSpeech, 
         agent.command_reason = ""
         agent.command_interrupt_reason = ""
         agent.command_hold_turns = 0
+        if agent.active_commitment:
+            agent.active_commitment.status = "interrupted"
+            agent.active_commitment.interrupt_reason = "player ended commitment"
+            agent.commitment_history.append(agent.active_commitment)
+            agent.active_commitment = None
         agent.current_plan = "keep distance"
         agent.current_target_object_id = ""
         agent.current_target_agent_id = ""
     elif decision.action == "go_to_object" and decision.accepted:
-        agent.following_player = False
-        agent.command_target_object_id = decision.target_object_id
-        agent.command_reason = decision.reason
-        agent.command_source = "player"
-        agent.command_priority = 76.0
-        agent.command_started_turn = world.turn
-        agent.command_interrupt_reason = ""
-        agent.command_hold_turns = 6
         target = world.objects.get(decision.target_object_id)
+        constraints = {"return_after": False, "avoid_if_health_below": 35, "avoid_if_stress_above": 92}
+        if target and target.kind == "cave_entrance":
+            constraints["requires_item_if_stress_above"] = {"item_id": "rope", "stress": 76}
+        _start_commitment(
+            world,
+            agent,
+            commitment_type="inspect",
+            target_object_id=decision.target_object_id,
+            priority=76.0,
+            goal=f"inspect {target.name if target else decision.target_object_id}",
+            constraints=constraints,
+            expiry_turns=14,
+            accepted_because=decision.reason,
+        )
         agent.current_plan = f"player task -> {target.name if target else decision.target_object_id}"
         agent.current_target_object_id = decision.target_object_id
         agent.current_target_agent_id = ""
@@ -263,6 +275,11 @@ def apply_agent_decision(world: WorldState, agent: Agent, parsed: ParsedSpeech, 
         agent.following_player = False
         agent.command_target_object_id = ""
         agent.command_hold_turns = 0
+        if agent.active_commitment:
+            agent.active_commitment.status = "interrupted"
+            agent.active_commitment.interrupt_reason = "hostile social alarm"
+            agent.commitment_history.append(agent.active_commitment)
+            agent.active_commitment = None
         agent.current_plan = "hostile social alarm"
         agent.current_target_object_id = ""
         agent.current_target_agent_id = ""
@@ -293,6 +310,58 @@ def apply_agent_decision(world: WorldState, agent: Agent, parsed: ParsedSpeech, 
     )
 
 
+def _start_commitment(
+    world: WorldState,
+    agent: Agent,
+    commitment_type: str,
+    priority: float,
+    goal: str,
+    constraints: dict[str, Any],
+    accepted_because: str,
+    target_object_id: str = "",
+    target_agent_id: str = "",
+    expiry_turns: int = 0,
+) -> Commitment:
+    if agent.active_commitment and agent.active_commitment.status == "active":
+        agent.active_commitment.status = "interrupted"
+        agent.active_commitment.interrupt_reason = "replaced by newer accepted commitment"
+        agent.commitment_history.append(agent.active_commitment)
+    commitment = Commitment(
+        id=f"commit_{agent.id}_{world.turn}_{len(agent.commitment_history) + 1}",
+        agent_id=agent.id,
+        issuer_id="player",
+        type=commitment_type,
+        status="active",
+        priority=priority,
+        target_object_id=target_object_id,
+        target_agent_id=target_agent_id,
+        goal=goal,
+        constraints=dict(constraints),
+        expiry_turns=expiry_turns,
+        started_turn=world.turn,
+        accepted_because=accepted_because,
+        betrayal_if_broken=True,
+    )
+    agent.active_commitment = commitment
+    agent.following_player = commitment_type == "follow"
+    agent.command_target_object_id = target_object_id
+    agent.command_reason = accepted_because
+    agent.command_source = "player"
+    agent.command_priority = priority
+    agent.command_started_turn = world.turn
+    agent.command_interrupt_reason = ""
+    agent.command_hold_turns = 0
+    world.log(
+        "agent_commitment_started",
+        f"{agent.name} accepts a {commitment_type} commitment: {goal}.",
+        source=agent.id,
+        salience=7,
+        tags=["agent", "decision", "commitment", "promise"],
+        metadata={"agent_id": agent.id, "commitment_id": commitment.id, "type": commitment_type, "target_object_id": target_object_id, "constraints": constraints},
+    )
+    return commitment
+
+
 def _primary_action(parsed: ParsedSpeech) -> SpeechAct | None:
     actionable: list[SpeechAct] = []
     for act in parsed.acts:
@@ -308,7 +377,7 @@ def _follow_response(world: WorldState, agent: Agent, act: SpeechAct, parsed: Pa
     score = _obedience_score(agent, act)
     near_cave = bool(world.object_by_kind("cave_entrance") and world.player.position.manhattan(world.object_by_kind("cave_entrance").position) <= 3)
     claim_hint = _unverified_claim_hint(parsed)
-    if agent.id == "mira" and near_cave and agent.needs.stress > 55 and score < 72:
+    if agent.traits.get("anxiety", 0.0) > 0.65 and near_cave and agent.needs.stress > 55 and score < 72:
         reply = f"I will not go into the cave on that alone. {claim_hint or 'I need someone else to know where we went.'}"
         return AgentDecision(True, False, "refuse", reply, "fear of the cave outweighed trust")
     if score >= 48:
@@ -329,11 +398,12 @@ def _go_to_response(world: WorldState, agent: Agent, obj: WorldObject, act: Spee
 
 
 def _player_follow_ack(world: WorldState, agent: Agent) -> AgentDecision:
-    if agent.command_target_object_id:
-        target = world.objects.get(agent.command_target_object_id)
+    active_target_id = agent.active_commitment.target_object_id if agent.active_commitment else agent.command_target_object_id
+    if active_target_id:
+        target = world.objects.get(active_target_id)
         name = target.name if target else "the place I agreed to check"
         return AgentDecision(True, True, "acknowledge_player_commitment", f"Good. Stay close; I am still heading to {name}.", f"player committed to follow while agent keeps task {name}")
-    if agent.following_player:
+    if agent.following_player or (agent.active_commitment and agent.active_commitment.type == "follow"):
         return AgentDecision(True, True, "acknowledge_player_commitment", "Then we stay together. I am following your lead.", "player affirmed a shared movement plan")
     return AgentDecision(True, True, "acknowledge_player_commitment", "Okay. I understand that as your intention, not as proof about the island.", "player stated an intention rather than an external fact")
 
@@ -345,10 +415,15 @@ def _stop_following(agent: Agent) -> AgentDecision:
 
 
 def _hostile_response(agent: Agent, act: SpeechAct) -> AgentDecision:
-    if agent.id == "boris":
+    dominance = agent.traits.get("dominance", 0.4)
+    empathy = agent.traits.get("empathy", 0.45)
+    anxiety = agent.traits.get("anxiety", 0.45)
+    if dominance > 0.65:
         reply = "Try it and this camp becomes a courtroom with fists."
-    elif agent.id == "mira":
+    elif empathy > 0.65:
         reply = "No. Stop. I will not let this become violence."
+    elif anxiety > 0.65:
+        reply = "Back away. I cannot think while you are talking like that."
     else:
         reply = "If this is a test, it is a cruel one. Back off."
     severity = max(0.35, act.severity)
@@ -359,14 +434,17 @@ def _obedience_score(agent: Agent, act: SpeechAct) -> float:
     social = agent.social_to_player
     score = social.trust + social.affinity * 0.35 - social.fear * 0.45 - social.resentment * 0.35
     score -= agent.needs.stress * 0.18
+    score += agent.traits.get("loyalty", 0.5) * 8.0
+    score += agent.traits.get("agreeableness", 0.5) * 5.0
+    score -= agent.traits.get("dominance", 0.5) * 4.0
+    score -= agent.traits.get("caution", 0.5) * max(0.0, agent.needs.stress - 45.0) * 0.08
     if act.force == "order" or act.kind == "order":
         score += 9.0
-        if agent.id == "boris":
+        if agent.traits.get("dominance", 0.0) > 0.65:
             score -= 7.0
-    if agent.id == "mira":
+    if agent.traits.get("empathy", 0.0) > 0.65:
         score += 8.0
-    if agent.id == "alice":
-        score += min(10.0, agent.needs.curiosity * 0.08)
+    score += min(10.0, agent.traits.get("curiosity", 0.0) * agent.needs.curiosity * 0.12)
     return score
 
 
@@ -410,9 +488,9 @@ def _unverified_claim_hint(parsed: ParsedSpeech) -> str:
 
 def _accept_follow_line(agent: Agent, force: str, claim_hint: str) -> str:
     caveat = f" {claim_hint}" if claim_hint else ""
-    if agent.id == "boris":
+    if agent.traits.get("dominance", 0.0) > 0.65:
         return f"Fine. I will follow, but I am watching the supplies and your decisions.{caveat}"
-    if agent.id == "mira":
+    if agent.traits.get("empathy", 0.0) > 0.65 or agent.traits.get("anxiety", 0.0) > 0.65:
         return f"Okay. I will stay close to you. Please do not make me regret it.{caveat}"
     if force == "order":
         return f"I will follow. But I heard that as an order, not a conversation.{caveat}"
@@ -421,9 +499,9 @@ def _accept_follow_line(agent: Agent, force: str, claim_hint: str) -> str:
 
 def _refuse_follow_line(agent: Agent, claim_hint: str) -> str:
     caveat = f" {claim_hint}" if claim_hint else ""
-    if agent.id == "boris":
+    if agent.traits.get("dominance", 0.0) > 0.65:
         return f"No. Not on trust alone. Tell me why first.{caveat}"
-    if agent.id == "mira":
+    if agent.traits.get("anxiety", 0.0) > 0.65:
         return f"I cannot. Not while everyone is scattered and I am this scared.{caveat}"
     return f"Not yet. I need a better reason.{caveat}"
 

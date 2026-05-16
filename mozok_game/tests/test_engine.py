@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from mozok_game.engine.capabilities import execute_item_action
 from mozok_game.engine.interactions import interact_with_object
 from mozok_game.engine.inventory import transfer_item
 from mozok_game.engine.models import Position
@@ -64,12 +65,27 @@ def test_player_can_pick_up_item_and_open_lockbox_with_tool():
     box = world.objects["lockbox_01"]
 
     interact_with_object(world, knife)
+    world.player.position = Position(box.position.x, box.position.y - 1)
     interact_with_object(world, box)
 
     assert "knife" in world.player.inventory
     assert "ration" in world.player.inventory
     assert "rope" in world.player.inventory
     assert box.state["open"]
+    assert world.event_log[-1].event_type == "item_action_pry"
+
+
+def test_item_capability_can_anchor_rope_at_cave():
+    world = load_world(base_dir())
+    cave = world.objects["cave_01"]
+    world.player.position = Position(cave.position.x, cave.position.y - 1)
+    world.player.inventory.append("rope")
+
+    result = execute_item_action(world, "player", "rope", cave.id, "anchor", "test")
+
+    assert result.ok
+    assert cave.state["rope_anchored"]
+    assert "rope" not in world.player.inventory
 
 
 def test_inventory_transfer_between_player_and_agent():
@@ -106,3 +122,15 @@ def test_agent_can_give_item_to_wounded_neighbour():
 
     assert "medkit" not in boris.inventory
     assert mira.health > 68
+
+
+def test_agent_can_use_capability_tool_on_target():
+    world = load_world(base_dir())
+    boris = world.agents["boris"]
+    box = world.objects["lockbox_01"]
+    boris.position = Position(box.position.x, box.position.y - 1)
+
+    apply_agent_intent(world, boris.id, "use_item_on_target", {"item_id": "knife", "target_id": box.id, "primitive": "pry"}, rationale="test")
+
+    assert box.state["open"]
+    assert "ration" in boris.inventory

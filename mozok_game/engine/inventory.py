@@ -5,12 +5,42 @@ from mozok_game.engine.world_state import WorldState
 
 
 ITEM_DEFS: dict[str, dict[str, object]] = {
-    "ration": {"name": "Ration", "tags": ["food", "safe"]},
-    "poison_berries": {"name": "Poison Berries", "tags": ["food", "toxic", "unknown"]},
-    "knife": {"name": "Knife", "tags": ["tool", "sharp", "weapon"]},
-    "rope": {"name": "Rope", "tags": ["tool", "climb", "safety"]},
-    "medkit": {"name": "Medkit", "tags": ["medical", "healing"]},
-    "journal_page": {"name": "Journal Page", "tags": ["lore", "evidence", "cave"]},
+    "ration": {
+        "name": "Ration",
+        "tags": ["food", "safe", "consumable"],
+        "capabilities": ["consume", "give", "trade"],
+        "properties": {"nutrition": 0.65, "danger": 0.0, "size": "small"},
+    },
+    "poison_berries": {
+        "name": "Poison Berries",
+        "tags": ["food", "toxic", "unknown", "consumable"],
+        "capabilities": ["consume", "test", "give", "trade", "threaten"],
+        "properties": {"nutrition": 0.25, "danger": 0.75, "uncertainty": 0.9, "size": "small"},
+    },
+    "knife": {
+        "name": "Knife",
+        "tags": ["tool", "sharp", "weapon"],
+        "capabilities": ["cut", "pry", "threaten", "carve", "prepare_food", "test", "give", "trade"],
+        "properties": {"sharpness": 0.8, "durability": 0.72, "danger": 0.62, "size": "small"},
+    },
+    "rope": {
+        "name": "Rope",
+        "tags": ["tool", "climb", "safety", "bind"],
+        "capabilities": ["tie", "bind", "anchor", "drag", "climb", "set_trap", "give", "trade"],
+        "properties": {"length": 12, "durability": 0.62, "danger": 0.22, "size": "medium"},
+    },
+    "medkit": {
+        "name": "Medkit",
+        "tags": ["medical", "healing", "tool"],
+        "capabilities": ["treat", "inspect", "give", "trade"],
+        "properties": {"healing": 0.72, "charges": 1, "size": "small"},
+    },
+    "journal_page": {
+        "name": "Journal Page",
+        "tags": ["lore", "evidence", "cave"],
+        "capabilities": ["inspect", "reveal", "give", "trade"],
+        "properties": {"evidence": 0.85, "danger": 0.0, "size": "tiny"},
+    },
 }
 
 
@@ -20,6 +50,18 @@ def item_name(item_id: str) -> str:
 
 def item_tags(item_id: str) -> set[str]:
     return set(ITEM_DEFS.get(item_id, {}).get("tags") or [])
+
+
+def item_capabilities(item_id: str) -> set[str]:
+    return set(ITEM_DEFS.get(item_id, {}).get("capabilities") or [])
+
+
+def item_properties(item_id: str) -> dict[str, object]:
+    return dict(ITEM_DEFS.get(item_id, {}).get("properties") or {})
+
+
+def items_with_capability(items: list[str], capability: str) -> list[str]:
+    return [item for item in items if capability in item_capabilities(item)]
 
 
 def inventory_label(items: list[str]) -> str:

@@ -78,6 +78,25 @@ class SocialState:
 
 
 @dataclass(slots=True)
+class Commitment:
+    id: str
+    agent_id: str
+    issuer_id: str = "player"
+    type: str = "promise"
+    status: str = "active"
+    priority: float = 60.0
+    target_object_id: str = ""
+    target_agent_id: str = ""
+    goal: str = ""
+    constraints: dict[str, Any] = field(default_factory=dict)
+    expiry_turns: int = 0
+    started_turn: int = 0
+    accepted_because: str = ""
+    betrayal_if_broken: bool = True
+    interrupt_reason: str = ""
+
+
+@dataclass(slots=True)
 class Agent:
     id: str
     name: str
@@ -85,6 +104,11 @@ class Agent:
     position: Position
     avatar_folder: str
     personality: str
+    traits: dict[str, float] = field(default_factory=dict)
+    values: list[str] = field(default_factory=list)
+    fears: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    action_biases: dict[str, float] = field(default_factory=dict)
     needs: Needs = field(default_factory=Needs)
     social_to_player: SocialState = field(default_factory=SocialState)
     emotion: Emotion = "neutral"
@@ -114,6 +138,8 @@ class Agent:
     command_started_turn: int = 0
     command_interrupt_reason: str = ""
     command_hold_turns: int = 0
+    active_commitment: Commitment | None = None
+    commitment_history: list[Commitment] = field(default_factory=list)
     last_player_contact_turn: int = -99
     alive: bool = True
 
@@ -176,6 +202,7 @@ class WorldObject:
 
 @dataclass(slots=True)
 class WorldEvent:
+    event_id: str
     turn: int
     event_type: str
     content: str
