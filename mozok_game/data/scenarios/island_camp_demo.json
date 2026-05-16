@@ -41,6 +41,7 @@
       "personality": "Practical, suspicious, protective of supplies.",
       "emotion": "suspicious",
       "current_goal": "protect_supplies",
+      "inventory": ["knife"],
       "needs": { "hunger": 54, "thirst": 30, "fatigue": 20, "stress": 24, "social": 25, "curiosity": 20 },
       "social_to_player": { "trust": 42, "fear": 8, "affinity": 25, "resentment": 18 },
       "memory_snippets": ["Boris counted four rations in the crate before dusk.", "Boris distrusts anyone who takes supplies without asking."]
@@ -54,6 +55,8 @@
       "personality": "Kind, observant, easily frightened, tries to keep people together.",
       "emotion": "afraid",
       "current_goal": "keep_group_together",
+      "health": 68,
+      "status_flags": ["wounded"],
       "needs": { "hunger": 28, "thirst": 58, "fatigue": 48, "stress": 62, "social": 70, "curiosity": 22 },
       "social_to_player": { "trust": 61, "fear": 18, "affinity": 54, "resentment": 4 },
       "memory_snippets": ["Mira saw footprints near the spring that did not match anyone in camp.", "Mira wants people to stay near the fire after dark."]
@@ -113,6 +116,60 @@
       "interactions": ["inspect", "enter"],
       "tags": ["cave", "danger", "mystery"],
       "state": { "entered": false, "noise_level": 2 }
+    },
+    {
+      "id": "berries_01",
+      "name": "Poison Berries",
+      "kind": "poisonous_berries",
+      "position": [2, 8],
+      "interactions": ["pick", "inspect"],
+      "tags": ["food", "toxic", "unknown", "plant"],
+      "state": { "berries": 3 }
+    },
+    {
+      "id": "knife_01",
+      "name": "Camp Knife",
+      "kind": "knife",
+      "position": [6, 3],
+      "interactions": ["take", "inspect"],
+      "tags": ["tool", "sharp", "weapon"],
+      "state": { "item_id": "knife", "taken": false }
+    },
+    {
+      "id": "rope_01",
+      "name": "Salt-Stiff Rope",
+      "kind": "rope",
+      "position": [7, 5],
+      "interactions": ["take", "inspect"],
+      "tags": ["tool", "rope", "safety"],
+      "state": { "item_id": "rope", "taken": false }
+    },
+    {
+      "id": "medkit_01",
+      "name": "Field Medkit",
+      "kind": "medkit",
+      "position": [4, 5],
+      "interactions": ["take", "inspect"],
+      "tags": ["medical", "tool", "healing"],
+      "state": { "item_id": "medkit", "taken": false }
+    },
+    {
+      "id": "journal_01",
+      "name": "Torn Journal Page",
+      "kind": "journal_page",
+      "position": [10, 9],
+      "interactions": ["read", "take"],
+      "tags": ["lore", "evidence", "cave", "mystery"],
+      "state": { "item_id": "journal_page", "taken": false }
+    },
+    {
+      "id": "lockbox_01",
+      "name": "Locked Supply Box",
+      "kind": "locked_supply_box",
+      "position": [6, 4],
+      "interactions": ["open", "inspect"],
+      "tags": ["supplies", "locked", "tool_required"],
+      "state": { "open": false }
     }
   ],
   "opening_events": [

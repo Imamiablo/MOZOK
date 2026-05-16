@@ -1,8 +1,10 @@
 from pathlib import Path
 
 from mozok_game.engine.interactions import interact_with_object
+from mozok_game.engine.inventory import transfer_item
+from mozok_game.engine.models import Position
 from mozok_game.engine.pathfinding import next_step_towards
-from mozok_game.engine.tick_scheduler import run_agent_ticks
+from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import load_world
 from mozok_game.mozok_client.client import OfflineMozokBrain
 
@@ -54,3 +56,53 @@ def test_agent_emotion_changes_with_social_pressure():
     boris.social_to_player.resentment = 90
     run_agent_ticks(world, OfflineMozokBrain())
     assert boris.emotion in {"angry", "suspicious", "neutral", "curious", "tired", "afraid"}
+
+
+def test_player_can_pick_up_item_and_open_lockbox_with_tool():
+    world = load_world(base_dir())
+    knife = world.objects["knife_01"]
+    box = world.objects["lockbox_01"]
+
+    interact_with_object(world, knife)
+    interact_with_object(world, box)
+
+    assert "knife" in world.player.inventory
+    assert "ration" in world.player.inventory
+    assert "rope" in world.player.inventory
+    assert box.state["open"]
+
+
+def test_inventory_transfer_between_player_and_agent():
+    world = load_world(base_dir())
+    alice = world.agents["alice"]
+    world.player.inventory.append("medkit")
+
+    assert transfer_item(world, "player", alice.id, "medkit", "test")
+    assert "medkit" in alice.inventory
+    assert "medkit" not in world.player.inventory
+
+
+def test_agent_uses_medkit_when_wounded():
+    world = load_world(base_dir())
+    mira = world.agents["mira"]
+    mira.inventory.append("medkit")
+    mira.health = 60
+    assert "wounded" in mira.status_flags
+
+    apply_agent_intent(world, mira.id, "use_inventory_item", {"item_id": "medkit"}, rationale="test")
+
+    assert "medkit" not in mira.inventory
+    assert mira.health > 60
+
+
+def test_agent_can_give_item_to_wounded_neighbour():
+    world = load_world(base_dir())
+    boris = world.agents["boris"]
+    mira = world.agents["mira"]
+    boris.inventory.append("medkit")
+    mira.position = Position(boris.position.x + 1, boris.position.y)
+
+    apply_agent_intent(world, boris.id, "give_item", {"target_agent_id": mira.id, "item_id": "medkit"}, rationale="test")
+
+    assert "medkit" not in boris.inventory
+    assert mira.health > 68

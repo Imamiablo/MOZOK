@@ -1,11 +1,53 @@
 from __future__ import annotations
 
 from mozok_game.engine.director import trigger_scripted_moment
+from mozok_game.engine.inventory import add_item, has_item, item_name
 from mozok_game.engine.models import Agent, WorldObject
 from mozok_game.engine.world_state import WorldState
 
 
+PICKUP_OBJECT_ITEMS = {
+    "knife": "knife",
+    "rope": "rope",
+    "medkit": "medkit",
+    "journal_page": "journal_page",
+}
+
+
 def interact_with_object(world: WorldState, obj: WorldObject) -> None:
+    if obj.kind in PICKUP_OBJECT_ITEMS:
+        item_id = str(obj.state.get("item_id") or PICKUP_OBJECT_ITEMS[obj.kind])
+        if obj.state.get("taken"):
+            world.log("object_empty", f"{obj.name} is already gone.", tags=["item", "empty"])
+            return
+        obj.state["taken"] = True
+        add_item(world, "player", item_id)
+        world.log("player_take_item", f"You pick up {item_name(item_id)}.", tags=["item", "inventory", obj.kind], metadata={"item_id": item_id, "object_id": obj.id})
+        if obj.kind == "journal_page":
+            world.claim("journal_page", "group", "A torn journal page says the cave machinery wakes when people gather near it.", truth_status="verified", confidence=0.85, object="cave_entrance", claim_type="evidence", target_object_id="cave_01")
+            world.flash("alice", "Evidence", "The journal page suggests the cave reacts to groups, not time.", kind="belief", intensity=0.82)
+        return
+    if obj.kind == "poisonous_berries":
+        amount = int(obj.state.get("berries", 3))
+        if amount <= 0:
+            world.log("berries_empty", f"{obj.name} has already been stripped.", tags=["item", "food"])
+            return
+        obj.state["berries"] = amount - 1
+        add_item(world, "player", "poison_berries")
+        world.log("player_take_berries", f"You pick a handful of suspicious berries. Berries left: {obj.state['berries']}.", tags=["item", "food", "toxic", "social_risk"], metadata={"item_id": "poison_berries"})
+        return
+    if obj.kind == "locked_supply_box":
+        if obj.state.get("open"):
+            world.log("box_empty", f"{obj.name} is open and mostly picked clean.", tags=["item", "supplies"])
+            return
+        if not has_item(world, "player", "knife"):
+            world.log("box_locked", f"{obj.name} is locked. A sharp tool might pry it open.", tags=["item", "locked", "supplies"])
+            return
+        obj.state["open"] = True
+        add_item(world, "player", "ration")
+        add_item(world, "player", "rope")
+        world.log("box_opened", f"You pry open {obj.name} with the knife. Inside: a ration and rope.", salience=8, tags=["item", "supplies", "tool"], metadata={"used_item": "knife"})
+        return
     if obj.kind == "water_source":
         world.player.thirst = max(0.0, world.player.thirst - 40.0)
         world.log("player_drink", f"You drink from {obj.name}. The water is cold and almost sweet.", tags=["water", "survival"])

@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from mozok_game.engine.inventory import inventory_label
 from mozok_game.engine.models import Agent, Position, WorldObject
 from mozok_game.engine.world_state import WorldState
 from mozok_game.ui.art_assets import ArtAssets
@@ -48,6 +49,12 @@ OBJECT_MARKERS = {
     "cave_entrance": "CAVE",
     "broken_radio": "RADIO",
     "shelter": "SHELTER",
+    "poisonous_berries": "BERRIES",
+    "knife": "KNIFE",
+    "rope": "ROPE",
+    "medkit": "MEDKIT",
+    "journal_page": "PAGE",
+    "locked_supply_box": "LOCKBOX",
 }
 
 OBJECT_COLOURS = {
@@ -57,6 +64,12 @@ OBJECT_COLOURS = {
     "cave_entrance": (84, 78, 104),
     "broken_radio": (120, 134, 145),
     "shelter": (115, 139, 84),
+    "poisonous_berries": (124, 62, 118),
+    "knife": (150, 154, 148),
+    "rope": (158, 117, 68),
+    "medkit": (196, 74, 72),
+    "journal_page": (209, 194, 140),
+    "locked_supply_box": (95, 82, 64),
 }
 
 FACING_DELTAS = {
@@ -97,7 +110,7 @@ class Renderer:
         self.debug = False
         self.avatar_cache: dict[tuple[str, str], Any] = {}
 
-    def draw(self, world: WorldState, dialogue_menu: dict | None = None, text_chat: dict | None = None) -> None:
+    def draw(self, world: WorldState, dialogue_menu: dict | None = None, text_chat: dict | None = None, agent_dossier: dict | None = None) -> None:
         self.screen.fill((10, 9, 7))
         left_rect = self.pygame.Rect(8, 8, 150, 436)
         view_rect = self.pygame.Rect(168, 8, 944, 436)
@@ -108,6 +121,7 @@ class Renderer:
         self._draw_party_panels(world, left_rect, right_rect)
         self._draw_bottom_panel(world, bottom_rect)
         self._draw_corner_status(world)
+        self._draw_player_inventory(world)
 
         if self.debug:
             self._draw_debug(world)
@@ -115,6 +129,8 @@ class Renderer:
             self._draw_dialogue_menu(world, dialogue_menu)
         if text_chat:
             self._draw_text_chat(world, text_chat)
+        if agent_dossier:
+            self._draw_agent_dossier(world, agent_dossier)
         self.pygame.display.flip()
 
     def _draw_first_person_view(self, world: WorldState, rect: Any) -> None:
@@ -533,7 +549,7 @@ class Renderer:
                 if not self._cell_visible(world, depth, side) or self._sight_blocked(world, pos) or not world.grid.is_walkable(pos):
                     continue
                 obj = self._object_at(world, pos)
-                if obj:
+                if obj and not obj.state.get("taken"):
                     self._draw_object_billboard(rect, obj, depth, side)
 
     def _draw_visible_agents(self, world: WorldState, rect: Any) -> None:
@@ -610,8 +626,12 @@ class Renderer:
             self.pygame.draw.rect(self.screen, EMOTION_COLOURS.get(agent.emotion, PAPER), avatar_rect, border_radius=4)
             self._centered(avatar_rect, agent.name[0].upper(), INK, self.title)
         self.pygame.draw.rect(self.screen, EMOTION_COLOURS.get(agent.emotion, PAPER), avatar_rect, width=2, border_radius=4)
-        self._draw_party_stat(rect.x + 8, rect.y + 94, rect.w - 16, "HP", 100.0 - agent.needs.hunger, (190, 56, 52))
+        self._draw_party_stat(rect.x + 8, rect.y + 94, rect.w - 16, "HP", agent.health, (190, 56, 52))
         self._draw_party_stat(rect.x + 8, rect.y + 112, rect.w - 16, "TR", agent.social_to_player.trust, (65, 142, 205))
+        if agent.following_player:
+            self._line(rect.x + 76, rect.y + 94, "FOLLOW", (255, 241, 166), self.tiny)
+        elif agent.command_target_object_id:
+            self._line(rect.x + 76, rect.y + 94, "TASK", (255, 241, 166), self.tiny)
 
     def _draw_party_stat(self, x: int, y: int, w: int, label: str, value: float, colour: tuple[int, int, int]) -> None:
         self._line(x, y - 2, label, PAPER, self.tiny)
@@ -623,20 +643,20 @@ class Renderer:
 
     def _draw_bottom_panel(self, world: WorldState, rect: Any) -> None:
         self._ornate_panel(rect, GREEN_PANEL, "Dialogue / Mozok Brain")
-        left = self.pygame.Rect(rect.x + 20, rect.y + 34, 420, rect.h - 54)
-        mid = self.pygame.Rect(rect.x + 456, rect.y + 34, 246, rect.h - 54)
-        right = self.pygame.Rect(rect.x + 718, rect.y + 34, 206, rect.h - 54)
+        left = self.pygame.Rect(rect.x + 20, rect.y + 34, 390, rect.h - 54)
+        mid = self.pygame.Rect(rect.x + 426, rect.y + 34, 278, rect.h - 54)
+        right = self.pygame.Rect(rect.x + 720, rect.y + 34, 204, rect.h - 54)
 
         self._line(left.x, left.y, "Conversation", PAPER, self.label)
         y = left.y + 26
-        chat_lines = world.chat_log[-5:] if world.chat_log else []
+        chat_lines = world.chat_log[-4:] if world.chat_log else []
         if chat_lines:
             for item in chat_lines:
                 name = f"{item.speaker_name}:"
                 colour = (255, 241, 166) if item.source == "player" else (174, 220, 238)
-                self._line(left.x, y, name, colour, self.small)
-                for line in self._wrap(item.content, 45, 2):
-                    self._line(left.x + 92, y, line, (240, 238, 220), self.small)
+                self._line(left.x, y, name[:10], colour, self.small)
+                for line in self._wrap(item.content, 56, 2):
+                    self._line(left.x + 70, y, line, (240, 238, 220), self.small)
                     y += 19
                 y += 3
         else:
@@ -647,10 +667,17 @@ class Renderer:
         agent = self._focused_agent(world)
         self._line(mid.x, mid.y, "Agent Focus", PAPER, self.label)
         if agent:
-            score = f"{agent.brain_focus_score:.2f}" if agent.brain_focus_score else "local"
-            self._line(mid.x, mid.y + 28, f"{agent.name} / {score}", (228, 233, 215), self.small)
-            y = mid.y + 52
-            for line in self._wrap(agent.brain_broadcast or agent.brain_focus, 29, 5):
+            self._line(mid.x, mid.y + 28, f"{agent.name} goal: {agent.current_goal.replace('_', ' ')}"[:42], (228, 233, 215), self.small)
+            self._line(mid.x, mid.y + 49, f"Plan: {agent.current_plan}"[:42], (238, 214, 161), self.tiny)
+            target_line = self._agent_target_line(world, agent)
+            y = mid.y + 68
+            if target_line:
+                self._line(mid.x, y, target_line[:42], (238, 214, 161), self.tiny)
+                y += 17
+            self._line(mid.x, y, self._compact_state_line(agent), (238, 214, 161), self.tiny)
+            y += 19
+            status = self._agent_commitment_line(agent) or agent.deliberation_summary or agent.brain_broadcast or agent.brain_focus
+            for line in self._wrap(status, 34, 5):
                 self._line(mid.x, y, line, (230, 231, 215), self.small)
                 y += 19
 
@@ -664,6 +691,25 @@ class Renderer:
                 self._line(right.x, y, line, (224, 229, 216), self.tiny)
                 y += 15
             y += 4
+
+    def _compact_state_line(self, agent: Agent) -> str:
+        return (
+            f"trust {agent.social_to_player.trust:.0f} "
+            f"fear {agent.social_to_player.fear:.0f} "
+            f"stress {agent.needs.stress:.0f}"
+        )
+
+    def _agent_target_line(self, world: WorldState, agent: Agent) -> str:
+        if agent.current_target_object_id:
+            obj = world.objects.get(agent.current_target_object_id)
+            return f"Target object: {obj.name if obj else agent.current_target_object_id}"
+        if agent.current_target_agent_id:
+            target = world.agents.get(agent.current_target_agent_id)
+            return f"Target agent: {target.name if target else agent.current_target_agent_id}"
+        if agent.command_target_object_id:
+            obj = world.objects.get(agent.command_target_object_id)
+            return f"Target object: {obj.name if obj else agent.command_target_object_id}"
+        return ""
 
     def _draw_dialogue_menu(self, world: WorldState, dialogue_menu: dict) -> None:
         agent = world.agents.get(dialogue_menu["agent_id"])
@@ -703,32 +749,164 @@ class Renderer:
 
         x = rect.x + 26
         y = rect.y + 76
-        visible_chat = self._chat_lines_for_targets(world, target_ids)
-        for line in visible_chat[-9:]:
-            speaker_colour = (255, 241, 166) if line.source == "player" else (174, 220, 238)
-            self._line(x, y, f"{line.speaker_name}:", speaker_colour, self.small)
-            yy = y
-            for text in self._wrap(line.content, 78, 3):
-                self._line(x + 118, yy, text, (240, 238, 220), self.small)
-                yy += 20
-            y = max(y + 24, yy + 5)
-            if y > rect.y + 360:
-                break
-
         input_rect = self.pygame.Rect(rect.x + 26, rect.bottom - 86, rect.w - 52, 48)
+        rows = self._chat_rows_for_targets(world, target_ids)
+        max_rows = max(1, (input_rect.y - y - 12) // 20)
+        scroll = max(0, int(text_chat.get("scroll", 0)))
+        end = max(0, len(rows) - scroll)
+        start = max(0, end - max_rows)
+        for speaker, text, colour in rows[start:end]:
+            if speaker:
+                self._line(x, y, speaker[:12], colour, self.small)
+            self._line(x + 118, y, text, (240, 238, 220), self.small)
+            y += 20
+        if start > 0:
+            self._line(rect.right - 116, rect.y + 44, f"{start} older", (238, 214, 161), self.tiny)
+        if end < len(rows):
+            self._line(rect.right - 128, input_rect.y - 24, f"{len(rows) - end} newer", (238, 214, 161), self.tiny)
+
         self.pygame.draw.rect(self.screen, (250, 240, 188), input_rect, border_radius=3)
         self.pygame.draw.rect(self.screen, GOLD_DARK, input_rect, width=2, border_radius=3)
         text = str(text_chat.get("text", ""))
         cursor = "_" if (self.pygame.time.get_ticks() // 450) % 2 == 0 else ""
         self._line(input_rect.x + 14, input_rect.y + 13, (text + cursor)[-88:], INK, self.label)
-        hint = "Type message / Enter send / Esc close" if mode == "direct" else "Type message / Enter send to adjacent agents / Esc close"
+        hint = "Type / Enter send / Up Down scroll / Esc close" if mode == "direct" else "Type / Enter send to adjacent agents / Up Down scroll / Esc close"
         self._line(rect.x + 26, rect.bottom - 26, hint, PAPER, self.small)
 
     def _chat_lines_for_targets(self, world: WorldState, target_ids: list[str]) -> list[Any]:
         target_set = set(target_ids)
         if not target_set:
             return world.chat_log
-        return [line for line in world.chat_log if line.speaker_id == "player" or line.speaker_id in target_set]
+        result = []
+        for line in world.chat_log:
+            if line.speaker_id == "player":
+                if not line.audience_ids or target_set.intersection(line.audience_ids):
+                    result.append(line)
+            elif line.speaker_id in target_set:
+                result.append(line)
+        return result
+
+    def _chat_rows_for_targets(self, world: WorldState, target_ids: list[str]) -> list[tuple[str, str, tuple[int, int, int]]]:
+        rows: list[tuple[str, str, tuple[int, int, int]]] = []
+        for line in self._chat_lines_for_targets(world, target_ids):
+            colour = (255, 241, 166) if line.source == "player" else (174, 220, 238)
+            wrapped = self._wrap(line.content, 82, 12)
+            for index, text in enumerate(wrapped):
+                rows.append((f"{line.speaker_name}:" if index == 0 else "", text, colour))
+            rows.append(("", "", colour))
+        return rows
+
+    def _draw_agent_dossier(self, world: WorldState, dossier: dict) -> None:
+        agent = world.agents.get(dossier.get("agent_id", ""))
+        if not agent:
+            return
+        self._dark_overlay(148)
+        rect = self.pygame.Rect(214, 54, 852, 590)
+        self._ornate_panel(rect, (43, 70, 57), f"{agent.name} Dossier")
+
+        avatar_rect = self.pygame.Rect(rect.x + 24, rect.y + 46, 154, 190)
+        avatar = self.art.character_sprite(agent.id, agent.emotion, agent.avatar_folder) or self._load_avatar(agent)
+        if avatar:
+            self._draw_sprite(avatar, avatar_rect)
+        else:
+            self.pygame.draw.rect(self.screen, EMOTION_COLOURS.get(agent.emotion, PAPER), avatar_rect, border_radius=5)
+        self.pygame.draw.rect(self.screen, GOLD, avatar_rect, width=2, border_radius=5)
+
+        lines = self._agent_dossier_lines(world, agent)
+        scroll = max(0, int(dossier.get("scroll", 0)))
+        visible = lines[scroll : scroll + 25]
+
+        x = rect.x + 204
+        y = rect.y + 44
+        for kind, text in visible:
+            if kind == "header":
+                self._line(x, y, text, PAPER, self.label)
+                y += 25
+            elif kind == "subtle":
+                self._line(x, y, text, (205, 215, 198), self.tiny)
+                y += 16
+            else:
+                for wrapped in self._wrap(text, 76, 3):
+                    self._line(x, y, wrapped, (238, 238, 220), self.small)
+                    y += 19
+            if y > rect.bottom - 40:
+                break
+
+        self._line(rect.x + 24, rect.bottom - 30, "I / Esc close   Up/Down scroll", PAPER, self.small)
+        count_text = f"{min(scroll + len(visible), len(lines))}/{len(lines)}"
+        self._line(rect.right - 72, rect.bottom - 30, count_text, PAPER, self.small)
+
+    def _agent_dossier_lines(self, world: WorldState, agent: Agent) -> list[tuple[str, str]]:
+        lines: list[tuple[str, str]] = []
+        lines.append(("header", "Profile"))
+        lines.append(("body", f"{agent.role}. Personality: {agent.personality}"))
+        flags = ", ".join(agent.status_flags) if agent.status_flags else "none"
+        lines.append(("body", f"Emotion: {agent.emotion} intensity {agent.emotion_intensity:.2f}. Health {agent.health:.0f}. Status: {flags}. Current goal: {agent.current_goal.replace('_', ' ')}."))
+        lines.append(("subtle", f"Position {agent.position.x},{agent.position.y}. Last action: {agent.last_action}."))
+
+        lines.append(("header", "Body And Social State"))
+        lines.append(("body", f"Hunger {agent.needs.hunger:.0f}, thirst {agent.needs.thirst:.0f}, fatigue {agent.needs.fatigue:.0f}, stress {agent.needs.stress:.0f}, social need {agent.needs.social:.0f}, curiosity {agent.needs.curiosity:.0f}."))
+        lines.append(("body", f"Toward player: trust {agent.social_to_player.trust:.0f}, fear {agent.social_to_player.fear:.0f}, affinity {agent.social_to_player.affinity:.0f}, resentment {agent.social_to_player.resentment:.0f}."))
+
+        lines.append(("header", "Commitments"))
+        commitment = self._agent_commitment_line(agent)
+        if commitment:
+            lines.append(("body", commitment))
+        elif agent.command_target_object_id:
+            target = world.objects.get(agent.command_target_object_id)
+            lines.append(("body", f"Accepted task: move toward {target.name if target else agent.command_target_object_id}."))
+        else:
+            lines.append(("body", "No active player commitment. Agent is following autonomous goals."))
+        if agent.command_interrupt_reason:
+            lines.append(("body", f"Last interruption: {agent.command_interrupt_reason}"))
+
+        lines.append(("header", "Working Thought"))
+        lines.append(("body", f"Current plan: {agent.current_plan}"))
+        target_line = self._agent_target_line(world, agent)
+        if target_line:
+            lines.append(("body", target_line))
+        lines.append(("body", f"Deliberation: {agent.deliberation_summary}"))
+        lines.append(("body", f"Focus: {agent.brain_focus}"))
+        if agent.brain_memory:
+            lines.append(("body", f"Memory in working context: {agent.brain_memory}"))
+        lines.append(("body", f"Broadcast: {agent.brain_broadcast}"))
+        lines.append(("subtle", f"Focus score {agent.brain_focus_score:.2f}. Risk/self-model note: {agent.brain_risk}."))
+
+        lines.append(("header", "Inventory"))
+        lines.append(("body", inventory_label(agent.inventory)))
+
+        lines.append(("header", "Known Memories"))
+        if agent.memory_snippets:
+            for memory in agent.memory_snippets:
+                lines.append(("body", f"- {memory}"))
+        else:
+            lines.append(("body", "No long-term memory snippets loaded."))
+
+        lines.append(("header", "Recent Claims Heard"))
+        claims = [claim for claim in world.claim_log[-10:] if claim.listener_id == agent.id or claim.listener_id == "group"]
+        if claims:
+            for claim in claims[-6:]:
+                target = claim.target_object_id or claim.object or "no target"
+                lines.append(("body", f"- {claim.speaker_id} claimed: {claim.text} [type: {claim.claim_type}; target: {target}; {claim.truth_status}, {claim.confidence:.2f}]"))
+        else:
+            lines.append(("body", "No explicit claims recorded for this agent yet."))
+
+        lines.append(("header", "Recent Dialogue"))
+        chat = [line for line in world.chat_log[-12:] if line.speaker_id in {agent.id, "player"}]
+        if chat:
+            for line in chat[-6:]:
+                lines.append(("body", f"{line.speaker_name}: {line.content}"))
+        else:
+            lines.append(("body", "No recent direct or group chat lines."))
+
+        lines.append(("header", "Recent Brain Notes"))
+        flashes = [flash for flash in world.brain_flashes[-10:] if flash.agent_id == agent.id]
+        if flashes:
+            for flash in flashes[-5:]:
+                lines.append(("body", f"- {flash.title}: {flash.content}"))
+        else:
+            lines.append(("body", "No recent brain notes for this agent."))
+        return lines
 
     def _draw_minimap(self, world: WorldState, rect: Any) -> None:
         self.pygame.draw.rect(self.screen, (19, 19, 17), rect, border_radius=4)
@@ -767,6 +945,13 @@ class Renderer:
         self.pygame.draw.rect(self.screen, GOLD, rect, width=2, border_radius=4)
         self._centered(rect, f"{world.turn:02d}.{world.player.position.x}{world.player.position.y}", PAPER, self.small)
 
+    def _draw_player_inventory(self, world: WorldState) -> None:
+        rect = self.pygame.Rect(760, 10, 220, 28)
+        self.pygame.draw.rect(self.screen, (17, 37, 31), rect, border_radius=4)
+        self.pygame.draw.rect(self.screen, GOLD_DARK, rect, width=1, border_radius=4)
+        text = f"Inv: {inventory_label(world.player.inventory)}"
+        self._line(rect.x + 8, rect.y + 5, text[:34], PAPER, self.tiny)
+
     def _draw_debug(self, world: WorldState) -> None:
         rect = self.pygame.Rect(178, 48, 560, 236)
         self.pygame.draw.rect(self.screen, (0, 0, 0), rect, border_radius=6)
@@ -774,12 +959,12 @@ class Renderer:
         y = rect.y + 14
         self._line(rect.x + 14, y, "DEBUG: world state / MOZOK-facing signals", PAPER, self.small)
         y += 24
-        self._line(rect.x + 14, y, f"Player pos: {world.player.position.x},{world.player.position.y} facing={world.player_facing} inv={world.player.inventory}", (230, 230, 230), self.small)
+        self._line(rect.x + 14, y, f"Player pos: {world.player.position.x},{world.player.position.y} facing={world.player_facing} inv={inventory_label(world.player.inventory)}", (230, 230, 230), self.small)
         y += 22
         for agent in world.agents.values():
             text = (
                 f"{agent.id}: pos={agent.position.x},{agent.position.y} emotion={agent.emotion} "
-                f"h={agent.needs.hunger:.0f} t={agent.needs.thirst:.0f} s={agent.needs.stress:.0f} action={agent.last_action}"
+                f"hp={agent.health:.0f} flags={','.join(agent.status_flags) or '-'} h={agent.needs.hunger:.0f} t={agent.needs.thirst:.0f} s={agent.needs.stress:.0f} action={agent.last_action}"
             )
             self._line(rect.x + 14, y, text[:84], (210, 210, 210), self.mono)
             y += 20
@@ -796,6 +981,13 @@ class Renderer:
 
     def _depth_scale(self, depth: int) -> float:
         return {1: 1.0, 2: 0.72, 3: 0.52, 4: 0.38, 5: 0.28}[depth]
+
+    def _agent_commitment_line(self, agent: Agent) -> str:
+        if agent.following_player:
+            return f"{agent.name} agreed to follow you. They will try to stay on a neighbouring tile."
+        if agent.command_target_object_id:
+            return f"{agent.name} accepted a task: {agent.command_reason or 'moving to a requested place'}."
+        return ""
 
     def _focused_agent(self, world: WorldState) -> Agent | None:
         if world.selected_agent_id and world.selected_agent_id in world.agents:

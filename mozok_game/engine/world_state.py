@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from mozok_game.engine.map_grid import MapGrid
-from mozok_game.engine.models import Agent, BrainFlash, ChatLine, Needs, Player, Position, SocialState, WorldEvent, WorldObject
+from mozok_game.engine.models import Agent, BrainFlash, ChatLine, ClaimRecord, Needs, Player, Position, SocialState, WorldEvent, WorldObject
 
 
 @dataclass
@@ -20,6 +20,7 @@ class WorldState:
     event_log: list[WorldEvent] = field(default_factory=list)
     brain_flashes: list[BrainFlash] = field(default_factory=list)
     chat_log: list[ChatLine] = field(default_factory=list)
+    claim_log: list[ClaimRecord] = field(default_factory=list)
     scripted_flags: set[str] = field(default_factory=set)
     last_agent_conversation_turn: int = -99
     selected_agent_id: str | None = None
@@ -53,17 +54,48 @@ class WorldState:
         self.brain_flashes = self.brain_flashes[-12:]
         return flash
 
-    def chat(self, speaker_id: str, speaker_name: str, content: str, source: str = "player") -> ChatLine:
+    def chat(self, speaker_id: str, speaker_name: str, content: str, source: str = "player", audience_ids: list[str] | None = None) -> ChatLine:
         line = ChatLine(
             turn=self.turn,
             speaker_id=speaker_id,
             speaker_name=speaker_name,
             content=content,
             source=source,
+            audience_ids=list(audience_ids or []),
         )
         self.chat_log.append(line)
         self.chat_log = self.chat_log[-30:]
         return line
+
+    def claim(
+        self,
+        speaker_id: str,
+        listener_id: str,
+        text: str,
+        truth_status: str = "unverified",
+        confidence: float = 0.0,
+        subject: str = "",
+        predicate: str = "",
+        object: str = "",
+        claim_type: str = "world_fact",
+        target_object_id: str = "",
+    ) -> ClaimRecord:
+        record = ClaimRecord(
+            turn=self.turn,
+            speaker_id=speaker_id,
+            listener_id=listener_id,
+            text=text,
+            subject=subject,
+            predicate=predicate,
+            object=object,
+            claim_type=claim_type,
+            target_object_id=target_object_id,
+            truth_status=truth_status,
+            confidence=max(0.0, min(1.0, float(confidence))),
+        )
+        self.claim_log.append(record)
+        self.claim_log = self.claim_log[-40:]
+        return record
 
     def occupied_positions(self, exclude_agent_id: str | None = None) -> set[tuple[int, int]]:
         result = {(self.player.position.x, self.player.position.y)}
@@ -88,6 +120,16 @@ class WorldState:
 
     def find_object_with_tag(self, tag: str) -> WorldObject | None:
         for obj in self.objects.values():
+            if tag not in obj.tags:
+                continue
+            if obj.state.get("taken"):
+                continue
+            if obj.kind == "food_crate" and int(obj.state.get("food", 0)) <= 0:
+                continue
+            if obj.kind == "poisonous_berries" and int(obj.state.get("berries", 0)) <= 0:
+                continue
+            if obj.kind == "locked_supply_box" and obj.state.get("open"):
+                continue
             if tag in obj.tags:
                 return obj
         return None
@@ -114,7 +156,10 @@ def load_world(base_dir: Path) -> WorldState:
             needs=Needs(**item.get("needs", {})),
             social_to_player=SocialState(**item.get("social_to_player", {})),
             emotion=item.get("emotion", "neutral"),
+            health=float(item.get("health", 100.0)),
+            status_flags=list(item.get("status_flags", [])),
             current_goal=item.get("current_goal", "stay_alive"),
+            inventory=list(item.get("inventory", [])),
             memory_snippets=list(item.get("memory_snippets", [])),
         )
     objects: dict[str, WorldObject] = {}

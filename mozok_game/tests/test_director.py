@@ -1,6 +1,10 @@
 from pathlib import Path
 
 from mozok_game.engine.director import apply_dialogue_choice, build_dialogue_options, run_social_director, trigger_scripted_moment
+from mozok_game.engine.affordances import choose_offline_intent
+from mozok_game.engine.models import Position
+from mozok_game.engine.speech_actions import apply_agent_decision, decide_agent_response, fallback_interpret_player_speech, parsed_speech_from_dict, record_player_claims
+from mozok_game.engine.tick_scheduler import apply_agent_intent
 from mozok_game.engine.world_state import load_world
 from mozok_game.mozok_client.client import OfflineMozokBrain
 
@@ -52,3 +56,132 @@ def test_offline_group_chat_records_agent_reply():
     assert reply
     assert world.chat_log[-1].speaker_id == "alice"
     assert "Alice" in alice.last_dialogue
+
+
+def test_follow_request_creates_agent_commitment():
+    world = load_world(base_dir())
+    mira = world.agents["mira"]
+
+    speech = fallback_interpret_player_speech("Please follow me and stay close.")
+    decision = decide_agent_response(world, mira, speech)
+    apply_agent_decision(world, mira, speech, decision)
+
+    assert decision.accepted
+    assert mira.following_player
+    assert mira.brain_focus == "Following the player by choice."
+
+
+def test_hostile_speech_changes_social_state_without_combat():
+    world = load_world(base_dir())
+    boris = world.agents["boris"]
+    before_fear = boris.social_to_player.fear
+
+    speech = fallback_interpret_player_speech("I will fight you.")
+    decision = decide_agent_response(world, boris, speech)
+    apply_agent_decision(world, boris, speech, decision)
+
+    assert decision.action == "hostile_alarm"
+    assert not decision.accepted
+    assert boris.social_to_player.fear > before_fear
+
+
+def test_semantic_parser_output_drives_threat_without_keywords():
+    world = load_world(base_dir())
+    boris = world.agents["boris"]
+    parsed = parsed_speech_from_dict(
+        "I'm gonna smash your face.",
+        {
+            "speech_acts": [
+                {
+                    "type": "threat",
+                    "action": "threaten_actor",
+                    "target": "listener",
+                    "severity": 0.86,
+                    "confidence": 0.94,
+                    "rationale": "idiomatic physical intimidation",
+                }
+            ],
+            "emotional_tone": "hostile",
+            "confidence": 0.94,
+        },
+    )
+
+    decision = decide_agent_response(world, boris, parsed)
+
+    assert decision.action == "hostile_alarm"
+    assert "threat" in decision.reason
+
+
+def test_player_claims_are_recorded_as_unverified():
+    world = load_world(base_dir())
+    mira = world.agents["mira"]
+    parsed = parsed_speech_from_dict(
+        "I heard someone crying in the cave. Follow me.",
+        {
+            "speech_acts": [{"type": "request", "action": "follow_player", "confidence": 0.9}],
+            "claims": [{"text": "The player heard someone crying in the cave.", "object_kind": "cave_entrance", "confidence": 0.75}],
+        },
+    )
+
+    record_player_claims(world, mira, parsed)
+
+    assert world.claim_log[-1].listener_id == "mira"
+    assert world.claim_log[-1].truth_status == "unverified"
+    assert world.claim_log[-1].target_object_id == "cave_01"
+
+
+def test_player_following_agent_is_not_recorded_as_suspicious_claim():
+    world = load_world(base_dir())
+    mira = world.agents["mira"]
+    cave = world.objects["cave_01"]
+    mira.command_target_object_id = cave.id
+    mira.command_reason = "accepted destination request for Cave Entrance"
+
+    parsed = parsed_speech_from_dict(
+        "Okay, I am going after you.",
+        {
+            "speech_acts": [{"type": "promise", "action": "player_follow_agent", "confidence": 0.92}],
+            "claims": [{"text": "The player is following Mira.", "claim_type": "player_intention", "confidence": 0.9}],
+        },
+    )
+
+    record_player_claims(world, mira, parsed)
+    decision = decide_agent_response(world, mira, parsed)
+    apply_agent_decision(world, mira, parsed, decision)
+
+    assert not world.claim_log
+    assert decision.action == "acknowledge_player_commitment"
+    assert mira.command_target_object_id == cave.id
+    assert "Cave Entrance" in decision.reply
+
+
+def test_unverified_claim_becomes_deliberation_affordance():
+    world = load_world(base_dir())
+    alice = world.agents["alice"]
+    world.claim("player", "alice", "I heard someone crying in the cave.", confidence=0.8)
+
+    intent = choose_offline_intent(world, alice, world.event_log[-10:])
+
+    assert intent.tool_name in {"talk_to_player", "move_to_object"}
+    assert "unverified claim" in intent.rationale
+    assert "Candidates:" in alice.deliberation_summary
+
+
+def test_talk_to_agent_intent_creates_agent_conversation():
+    world = load_world(base_dir())
+    alice = world.agents["alice"]
+    boris = world.agents["boris"]
+    boris.position = Position(alice.position.x + 1, alice.position.y)
+
+    apply_agent_intent(
+        world,
+        alice.id,
+        "talk_to_agent",
+        {"target_agent_id": boris.id},
+        dialogue="Alice: Boris, listen before we split up.",
+        rationale="social pressure needs coordination",
+    )
+
+    assert world.chat_log[-1].speaker_id == "alice"
+    assert world.event_log[-1].event_type == "agent_agent_dialogue"
+    assert world.event_log[-1].metadata["listener_id"] == "boris"

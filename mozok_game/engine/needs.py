@@ -32,5 +32,10 @@ def apply_environment_needs(agent: Agent, near_campfire: bool = False, near_cave
     if near_cave:
         agent.needs.stress += 3.0
         agent.needs.curiosity += 2.0
+    if "wounded" in agent.status_flags:
+        agent.needs.fatigue += 1.2
+        agent.needs.stress += 0.8
+        if agent.needs.hunger > 85 or agent.needs.thirst > 85:
+            agent.health = max(1.0, agent.health - 0.6)
     agent.needs.clamp()
     update_emotion(agent)

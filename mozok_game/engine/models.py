@@ -89,6 +89,8 @@ class Agent:
     social_to_player: SocialState = field(default_factory=SocialState)
     emotion: Emotion = "neutral"
     emotion_intensity: float = 0.2
+    health: float = 100.0
+    status_flags: list[str] = field(default_factory=list)
     current_goal: str = "stay_alive"
     inventory: list[str] = field(default_factory=list)
     last_dialogue: str = ""
@@ -99,7 +101,20 @@ class Agent:
     brain_memory: str = ""
     brain_risk: str = "low"
     brain_broadcast: str = "No cognitive broadcast yet."
+    deliberation_summary: str = "No deliberation yet."
+    current_plan: str = "idle"
+    current_target_object_id: str = ""
+    current_target_agent_id: str = ""
     memory_snippets: list[str] = field(default_factory=list)
+    following_player: bool = False
+    command_target_object_id: str = ""
+    command_reason: str = ""
+    command_source: str = "player"
+    command_priority: float = 60.0
+    command_started_turn: int = 0
+    command_interrupt_reason: str = ""
+    command_hold_turns: int = 0
+    last_player_contact_turn: int = -99
     alive: bool = True
 
 
@@ -120,12 +135,29 @@ class ChatLine:
     speaker_name: str
     content: str
     source: str = "player"
+    audience_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ClaimRecord:
+    turn: int
+    speaker_id: str
+    listener_id: str
+    text: str
+    subject: str = ""
+    predicate: str = ""
+    object: str = ""
+    claim_type: str = "world_fact"
+    target_object_id: str = ""
+    truth_status: str = "unverified"
+    confidence: float = 0.0
 
 
 @dataclass(slots=True)
 class Player:
     position: Position
     inventory: list[str] = field(default_factory=list)
+    health: float = 100.0
     hunger: float = 10.0
     thirst: float = 10.0
     fatigue: float = 5.0

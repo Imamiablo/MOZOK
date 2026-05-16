@@ -91,10 +91,57 @@ It creates scene textures, object sprites, character billboard sprites, and `pre
 - `D` / Right: turn right
 - `E`: interact with the object ahead, or open direct free-text chat with the agent on the tile ahead
 - `T`: open free-text group chat with all agents on neighbouring tiles
+- `I`: open the selected/front/nearby agent dossier
+- `G`: give the first item in your inventory to the agent directly ahead
+- `R`: request/take the first item from the agent directly ahead
 - `Enter`: send the current direct or group chat message
+- Up/Down while chatting: scroll conversation history
 - `Space`: wait / end turn
 - `Tab`: toggle debug overlay
 - `Esc`: quit
+
+## Agent Speech Actions
+
+Direct or group chat is no longer only dialogue text. Simple player speech can now become a simulation command:
+
+- "follow me" / "stay close" can create a follow commitment
+- "stop following" / "wait here" clears that commitment
+- "go to the campfire/water/cave/radio/food" can create a task
+- hostile phrases make the agent react socially instead of starting silent combat
+
+Agents can accept or refuse based on trust, fear, stress, resentment, personality bias, and perceived danger. The world still validates movement and tasks.
+
+In MOZOK API mode, player text first goes through an LLM semantic parser that returns structured speech acts and unverified claims. That means slang, paraphrases, lies, manipulation, threats, and requests should be interpreted by meaning instead of by fixed keyword lists. Offline mode keeps a tiny fallback parser only so the demo remains usable without the backend.
+
+## Agent Deliberation Layer
+
+Each agent now builds a short list of possible actions before acting:
+
+- satisfy an urgent body need by moving to a tagged world object
+- verify an unconfirmed claim from the player
+- talk to the player when social pressure is high
+- talk to another nearby agent to coordinate or challenge a concern
+- give an item to another agent when hunger, wounds, or trust make it useful
+- use carried inventory items such as rations or medkits
+- investigate mystery objects when curiosity beats fear
+- wait when nothing else is worth doing
+
+The game engine still owns movement and world validation. MOZOK or the offline brain chooses from these affordances, then the tick scheduler applies the result. Press `I` in-game to open an agent dossier with their current goal, active target object or agent, commitment, deliberation summary, inventory, remembered claims, memory snippets, and recent dialogue.
+
+## Items And World Pressure
+
+The island now includes a first item/pressure pass:
+
+- poisonous berries
+- knife
+- rope
+- medkit
+- torn journal page
+- locked supply box
+- cold rain event
+- wounded agent state
+
+Items can sit in the player inventory or an agent inventory. The player can pick up objects with `E`, give with `G`, and request with `R`. Agents can also pick up, use, and share items through their autonomous deliberation loop.
 
 ## What to show in a demo
 

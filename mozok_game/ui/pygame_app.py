@@ -4,7 +4,9 @@ from pathlib import Path
 
 from mozok_game.engine.director import apply_dialogue_choice, build_dialogue_options
 from mozok_game.engine.interactions import interact_with_object
-from mozok_game.engine.tick_scheduler import run_agent_ticks
+from mozok_game.engine.inventory import first_transferable_item, item_name, transfer_item
+from mozok_game.engine.speech_actions import apply_agent_decision, decide_agent_response, record_player_claims
+from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import WorldState, load_world
 from mozok_game.mozok_client.client import build_brain_client
 from mozok_game.ui.renderer import Renderer
@@ -30,6 +32,7 @@ class PygameApp:
         self.brain = build_brain_client()
         self.dialogue_menu: dict | None = None
         self.text_chat: dict | None = None
+        self.agent_dossier: dict | None = None
         self.world.log("brain_mode", getattr(self.brain, "last_status", "Brain client ready"), source="game", salience=4, tags=["debug", "brain"])
         width = 1280
         height = 720
@@ -46,9 +49,11 @@ class PygameApp:
                     running = False
                 elif event.type == self.pygame.TEXTINPUT and self.text_chat:
                     self.text_chat["text"] += event.text
+                elif event.type == self.pygame.MOUSEWHEEL and self.text_chat:
+                    self._scroll_text_chat(event.y * 3)
                 elif event.type == self.pygame.KEYDOWN:
                     running = self._handle_key(event.key)
-            self.renderer.draw(self.world, self.dialogue_menu, self.text_chat)
+            self.renderer.draw(self.world, self.dialogue_menu, self.text_chat, self.agent_dossier)
             self.clock.tick(30)
         self.pygame.quit()
 
@@ -56,12 +61,17 @@ class PygameApp:
         pg = self.pygame
         if self.text_chat:
             return self._handle_text_chat_key(key)
+        if self.agent_dossier:
+            return self._handle_dossier_key(key)
         if self.dialogue_menu:
             return self._handle_dialogue_key(key)
         if key == pg.K_ESCAPE:
             return False
         if key == pg.K_TAB:
             self.renderer.debug = not self.renderer.debug
+            return True
+        if key in {pg.K_i}:
+            self._open_agent_dossier()
             return True
         if key in {pg.K_SPACE}:
             self.world.log("player_wait", "You wait and listen to the island breathe.", tags=["wait"])
@@ -73,6 +83,12 @@ class PygameApp:
             return True
         if key in {pg.K_t}:
             self._open_text_chat()
+            return True
+        if key in {pg.K_g}:
+            self._give_item_to_front_agent()
+            return True
+        if key in {pg.K_r}:
+            self._request_item_from_front_agent()
             return True
         if key in {pg.K_LEFT, pg.K_a}:
             self._rotate_player(-1)
@@ -87,6 +103,19 @@ class PygameApp:
         if key in {pg.K_DOWN, pg.K_s}:
             self._move_relative(-1)
             run_agent_ticks(self.world, self.brain)
+            return True
+        return True
+
+    def _handle_dossier_key(self, key: int) -> bool:
+        pg = self.pygame
+        if key in {pg.K_ESCAPE, pg.K_i}:
+            self.agent_dossier = None
+            return True
+        if key in {pg.K_DOWN, pg.K_PAGEDOWN, pg.K_s}:
+            self.agent_dossier["scroll"] = int(self.agent_dossier.get("scroll", 0)) + (8 if key == pg.K_PAGEDOWN else 1)
+            return True
+        if key in {pg.K_UP, pg.K_PAGEUP, pg.K_w}:
+            self.agent_dossier["scroll"] = max(0, int(self.agent_dossier.get("scroll", 0)) - (8 if key == pg.K_PAGEUP else 1))
             return True
         return True
 
@@ -151,14 +180,32 @@ class PygameApp:
         if key == pg.K_BACKSPACE:
             self.text_chat["text"] = self.text_chat["text"][:-1]
             return True
+        if key in {pg.K_UP, pg.K_PAGEUP}:
+            self._scroll_text_chat(9 if key == pg.K_PAGEUP else 1)
+            return True
+        if key in {pg.K_DOWN, pg.K_PAGEDOWN}:
+            self._scroll_text_chat(-9 if key == pg.K_PAGEDOWN else -1)
+            return True
+        if key == pg.K_HOME:
+            self.text_chat["scroll"] = 9999
+            return True
+        if key == pg.K_END:
+            self.text_chat["scroll"] = 0
+            return True
         if key == pg.K_RETURN:
             text = self.text_chat.get("text", "").strip()
             targets = list(self.text_chat.get("target_ids", []))
             if text and targets:
                 self._send_group_chat(text, targets)
                 self.text_chat["text"] = ""
+                self.text_chat["scroll"] = 0
             return True
         return True
+
+    def _scroll_text_chat(self, amount: int) -> None:
+        if not self.text_chat:
+            return
+        self.text_chat["scroll"] = max(0, int(self.text_chat.get("scroll", 0)) + amount)
 
     def _interact(self) -> bool:
         front = self._front_position()
@@ -193,6 +240,7 @@ class PygameApp:
             "title": "Group Chat",
             "target_ids": target_ids,
             "text": "",
+            "scroll": 0,
         }
 
     def _open_direct_chat(self, agent) -> None:
@@ -202,7 +250,20 @@ class PygameApp:
             "title": f"Talk to {agent.name}",
             "target_ids": [agent.id],
             "text": "",
+            "scroll": 0,
         }
+
+    def _open_agent_dossier(self) -> None:
+        agent = self._agent_at(self._front_position())
+        if not agent and self.world.selected_agent_id:
+            agent = self.world.agents.get(self.world.selected_agent_id)
+        if not agent:
+            nearby = self.world.nearby_agents(distance=2)
+            agent = nearby[0] if nearby else next(iter(self.world.agents.values()), None)
+        if not agent:
+            return
+        self.world.selected_agent_id = agent.id
+        self.agent_dossier = {"agent_id": agent.id, "scroll": 0}
 
     def _send_group_chat(self, text: str, target_ids: list[str]) -> None:
         agents = [self.world.agents[agent_id] for agent_id in target_ids if agent_id in self.world.agents]
@@ -214,7 +275,7 @@ class PygameApp:
         event_type = "player_direct_chat" if is_direct else "player_group_chat"
         chat_tag = "direct_chat" if is_direct else "group_chat"
         audience = participant_names[0] if is_direct else ", ".join(participant_names)
-        self.world.chat("player", "You", text, source="player")
+        self.world.chat("player", "You", text, source="player", audience_ids=target_ids)
         self.world.log(
             event_type,
             f"You say to {audience}: {text}",
@@ -224,20 +285,69 @@ class PygameApp:
             metadata={"target_agent_ids": target_ids},
         )
         for agent in agents:
-            reply = self.brain.chat(self.world, agent, text, participant_names)
+            parsed = self.brain.interpret_speech(self.world, agent, text)
+            record_player_claims(self.world, agent, parsed)
+            decision = decide_agent_response(self.world, agent, parsed)
+            if decision.handled:
+                apply_agent_decision(self.world, agent, parsed, decision)
+                reply = decision.reply
+            else:
+                reply = self.brain.chat(self.world, agent, text, participant_names)
             clean = reply.strip()
             if clean.lower().startswith(f"{agent.name.lower()}:"):
                 clean = clean.split(":", 1)[1].strip()
             agent.last_dialogue = f"{agent.name}: {clean}"
-            self.world.chat(agent.id, agent.name, clean, source="agent")
-            self.world.log(
-                "agent_chat_response",
-                f"{agent.name}: {clean}",
-                source=agent.id,
-                salience=7,
-                tags=["dialogue", "agent", chat_tag],
-                metadata={"agent_id": agent.id, "participants": participant_names},
-            )
+            agent.last_player_contact_turn = self.world.turn
+            if decision.action != "hostile_alarm" and not agent.following_player and not agent.command_target_object_id:
+                agent.command_hold_turns = max(agent.command_hold_turns, 3)
+                agent.command_reason = "staying after player conversation"
+            self.world.chat(agent.id, agent.name, clean, source="agent", audience_ids=target_ids)
+            if not decision.handled:
+                self.world.log(
+                    "agent_chat_response",
+                    f"{agent.name}: {clean}",
+                    source=agent.id,
+                    salience=7,
+                    tags=["dialogue", "agent", chat_tag],
+                    metadata={"agent_id": agent.id, "participants": participant_names},
+                )
+
+    def _give_item_to_front_agent(self) -> None:
+        agent = self._agent_at(self._front_position())
+        if not agent:
+            self.world.log("item_give_none", "Face an agent before giving an item.", tags=["item", "inventory"])
+            return
+        item_id = first_transferable_item(self.world.player.inventory)
+        if not item_id:
+            self.world.log("item_give_empty", "Your inventory is empty.", tags=["item", "inventory"])
+            return
+        if transfer_item(self.world, "player", agent.id, item_id, "player quick give"):
+            agent.social_to_player.trust += 1.5
+            agent.social_to_player.affinity += 1.0
+            agent.social_to_player.clamp()
+            self.world.selected_agent_id = agent.id
+            self.world.chat(agent.id, agent.name, f"I have {item_name(item_id)}. I will remember that.", source="agent", audience_ids=[agent.id])
+            if item_id == "medkit" and "wounded" in agent.status_flags:
+                apply_agent_intent(self.world, agent.id, "use_inventory_item", {"item_id": "medkit"}, rationale="player gave medical supplies")
+
+    def _request_item_from_front_agent(self) -> None:
+        agent = self._agent_at(self._front_position())
+        if not agent:
+            self.world.log("item_request_none", "Face an agent before requesting an item.", tags=["item", "inventory"])
+            return
+        item_id = first_transferable_item(agent.inventory)
+        if not item_id:
+            self.world.log("item_request_empty", f"{agent.name} has nothing to give.", tags=["item", "inventory"])
+            return
+        if agent.social_to_player.trust < 35 and item_id not in {"medkit", "ration"}:
+            agent.social_to_player.resentment += 2.0
+            agent.social_to_player.clamp()
+            self.world.chat(agent.id, agent.name, f"No. I am not handing over {item_name(item_id)} right now.", source="agent", audience_ids=[agent.id])
+            self.world.log("item_request_refused", f"{agent.name} refuses to give you {item_name(item_id)}.", source=agent.id, tags=["item", "inventory", "social"])
+            return
+        if transfer_item(self.world, agent.id, "player", item_id, "player quick request"):
+            self.world.selected_agent_id = agent.id
+            self.world.chat(agent.id, agent.name, f"Take {item_name(item_id)}. Use it carefully.", source="agent", audience_ids=[agent.id])
 
     def _open_dialogue_menu(self, agent) -> None:
         self.world.selected_agent_id = agent.id

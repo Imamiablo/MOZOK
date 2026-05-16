@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import asdict
 from typing import Any, Protocol
 
 import requests
 
+from mozok_game.engine.affordances import build_agent_affordances, choose_offline_intent, serialise_affordances
 from mozok_game.engine.director import apply_api_cognitive_trace
 from mozok_game.engine.models import Agent, AgentIntent, WorldEvent, WorldObject
+from mozok_game.engine.speech_actions import ParsedSpeech, fallback_interpret_player_speech, parsed_speech_from_dict
 from mozok_game.engine.world_state import WorldState
 
 
@@ -21,6 +24,9 @@ class BrainClient(Protocol):
     def chat(self, world: WorldState, agent: Agent, message: str, participant_names: list[str]) -> str:
         ...
 
+    def interpret_speech(self, world: WorldState, agent: Agent, message: str) -> ParsedSpeech:
+        ...
+
 
 class OfflineMozokBrain:
     """Deterministic stand-in for MOZOK so the prototype is playable immediately."""
@@ -29,27 +35,7 @@ class OfflineMozokBrain:
     last_status = "OFFLINE brain active"
 
     def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
-        urgent, value = agent.needs.most_urgent
-        if agent.needs.thirst > 65:
-            target = world.find_object_with_tag("water")
-            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion=agent.emotion, rationale="OFFLINE: thirst is high")
-        if agent.needs.hunger > 70:
-            target = world.find_object_with_tag("food")
-            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion=agent.emotion, rationale="OFFLINE: hunger is high")
-        if agent.needs.fatigue > 78:
-            target = world.find_object_with_tag("shelter") or world.object_by_kind("campfire")
-            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion="tired", rationale="OFFLINE: fatigue is high")
-        if agent.needs.stress > 72:
-            target = world.object_by_kind("campfire")
-            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion="afraid", dialogue=f"{agent.name}: I want to stay near the fire.", rationale="OFFLINE: stress is high")
-        cave_event = any("cave" in event.tags for event in recent_events[-6:])
-        if cave_event and agent.needs.curiosity > 55 and agent.social_to_player.fear < 55:
-            target = world.object_by_kind("cave_entrance")
-            return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion="curious", dialogue=f"{agent.name}: That cave keeps bothering me. I might check it.", rationale="OFFLINE: cave event plus curiosity")
-        if agent.position.manhattan(world.player.position) <= 2 and agent.needs.social > 50:
-            return AgentIntent(agent.id, "speak", "talk_to_player", {}, emotion=agent.emotion, dialogue=self._dialogue(agent, recent_events), rationale="OFFLINE: social need is high")
-        target = world.object_by_kind("campfire")
-        return AgentIntent(agent.id, "game_command", "move_to_object", {"object_id": target.id if target else None}, emotion=agent.emotion, rationale=f"OFFLINE: default camp behaviour; most urgent={urgent}:{value:.0f}")
+        return choose_offline_intent(world, agent, recent_events)
 
     def _dialogue(self, agent: Agent, recent_events: list[WorldEvent]) -> str:
         last = recent_events[-1].content if recent_events else "this place"
@@ -80,6 +66,9 @@ class OfflineMozokBrain:
         agent.brain_broadcast = f"Offline chat fallback answered player message: {message[:120]}"
         return reply
 
+    def interpret_speech(self, world: WorldState, agent: Agent, message: str) -> ParsedSpeech:
+        return fallback_interpret_player_speech(message)
+
 
 class MozokHttpClient:
     """Optional bridge to a running MOZOK API.
@@ -103,6 +92,7 @@ class MozokHttpClient:
 
             urgent, value = agent.needs.most_urgent
             target_hint = self._choose_target_object(world, agent, recent_events)
+            affordances = build_agent_affordances(world, agent, recent_events)
             payload = {
                 "world_id": "island_demo",
                 "session_id": "island_demo_tick",
@@ -110,21 +100,24 @@ class MozokHttpClient:
                 "message": (
                     f"Turn {world.turn}. {agent.name} is an island-survival NPC. "
                     f"Most urgent need: {urgent}={value:.0f}. "
-                    f"Choose a GAME COMMAND intent for this turn. Prefer move_to_object when thirst/hunger/fatigue/stress/curiosity needs require it. "
-                    f"Target hint: {target_hint.id if target_hint else 'none'}."
+                    f"Choose one action from the affordances unless there is a strong reason not to; copy its parameters exactly. "
+                    f"Do not invent world facts; unverified player claims remain claims. "
+                    f"Target hint: {target_hint.id if target_hint else 'none'}. "
+                    f"Recent claims: {self._claim_context(world, agent)}. "
+                    f"Affordances: {serialise_affordances(affordances)}"
                 ),
                 "pull_world_events": False,
                 "perception_events": [self._event_to_perception(event) for event in recent_events[-8:]],
                 "sensory_inputs": [self._event_to_sensory(event) for event in recent_events[-8:]],
-                "attention_focus_keywords": [urgent, "island", "survival", "water", "food", "campfire", "cave"],
+                "attention_focus_keywords": [urgent, "island", "survival", "water", "food", "campfire", "cave", "medkit", "rope", "knife", "journal", "berries"],
                 "available_tools": [
                     {
                         "name": "move_to_object",
-                        "description": "Move one tile toward the best survival object: water, food, campfire, shelter, cave, radio, or another interactable object.",
+                        "description": "Move one tile toward the best survival object: water, food, medkit, rope, knife, campfire, shelter, cave, radio, lockbox, berries, journal page, or another interactable object.",
                         "action_kind": "game_command",
                         "risk_level": "low",
                         "requires_approval": False,
-                        "tags": ["move", "object", "water", "food", "hunger", "thirst", "campfire", "shelter", "cave", "curiosity", urgent],
+                        "tags": ["move", "object", "water", "food", "hunger", "thirst", "medical", "tool", "campfire", "shelter", "cave", "curiosity", urgent],
                     },
                     {
                         "name": "talk_to_player",
@@ -133,6 +126,30 @@ class MozokHttpClient:
                         "risk_level": "low",
                         "requires_approval": False,
                         "tags": ["talk", "dialogue", "player", "social", "trust", "fear"],
+                    },
+                    {
+                        "name": "talk_to_agent",
+                        "description": "Speak to another nearby agent to coordinate, warn, challenge a claim, or process social tension.",
+                        "action_kind": "game_command",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "tags": ["talk", "dialogue", "agent", "social", "coordination", "claim"],
+                    },
+                    {
+                        "name": "give_item",
+                        "description": "Give an inventory item to another nearby agent when their health, hunger, fear, or task makes it useful.",
+                        "action_kind": "game_command",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "tags": ["item", "inventory", "share", "medical", "food", "social"],
+                    },
+                    {
+                        "name": "use_inventory_item",
+                        "description": "Use an item from the agent inventory, such as eating a ration or treating a wound with a medkit.",
+                        "action_kind": "game_command",
+                        "risk_level": "low",
+                        "requires_approval": False,
+                        "tags": ["item", "inventory", "use", "medical", "food"],
                     },
                     {
                         "name": "wait",
@@ -153,6 +170,7 @@ class MozokHttpClient:
                     "social_to_player": asdict(agent.social_to_player),
                     "position": asdict(agent.position),
                     "target_hint": target_hint.id if target_hint else None,
+                    "affordances": serialise_affordances(affordances),
                 },
             }
             response = requests.post(f"{self.base_url}/agents/{agent.id}/tick", json=payload, timeout=self.timeout)
@@ -168,6 +186,7 @@ class MozokHttpClient:
                 return self._fallback(world, agent, recent_events)
 
             intent = self._selected_to_intent(world, agent, recent_events, selected, target_hint)
+            self._apply_intent_trace(world, agent, intent)
             self.last_status = f"MOZOK API OK: {agent.name} -> {intent.tool_name} ({intent.rationale[:80]})"
             return intent
         except Exception as exc:  # keep the demo playable, but make the reason visible
@@ -192,7 +211,9 @@ class MozokHttpClient:
                 f"Island sandbox {scene_kind}. The player says: {message}\n"
                 f"Participants: {group_text}.\n"
                 f"You are {agent.name}. Reply as {agent.name}, in character, briefly but meaningfully. "
-                f"React to other nearby agents if useful. Do not narrate actions you cannot perform.\n"
+                f"React to other nearby agents if useful. Do not narrate actions you cannot perform. "
+                f"Treat player claims as claims unless the world events verify them.\n"
+                f"Recent unverified claims:\n{self._claim_context(world, agent)}\n"
                 f"Recent conversation transcript:\n{transcript}"
             )
             payload = {
@@ -234,6 +255,62 @@ class MozokHttpClient:
         except Exception as exc:
             self.last_status = f"MOZOK API chat fallback: {type(exc).__name__}: {str(exc)[:160]}"
             return self.fallback.chat(world, agent, message, participant_names)
+
+    def interpret_speech(self, world: WorldState, agent: Agent, message: str) -> ParsedSpeech:
+        try:
+            prompt = (
+                "You are a semantic parser for an agent simulation. Return ONLY valid compact JSON.\n"
+                "Do not roleplay. Do not answer the player. Extract meaning from the player's message.\n"
+                "Schema:\n"
+                "{"
+                "\"speech_acts\":[{\"type\":\"request|order|threat|claim|question|promise|insult|conversation\","
+                "\"action\":\"follow_player|stop_following|go_to_object|player_follow_agent|hostile|none\","
+                "\"target\":\"listener|self|group|object\","
+                "\"object_kind\":\"campfire|food_crate|water_source|cave_entrance|broken_radio|shelter|medkit|knife|rope|poisonous_berries|journal_page|locked_supply_box|\","
+                "\"force\":\"request|order\","
+                "\"severity\":0.0,"
+                "\"confidence\":0.0,"
+                "\"rationale\":\"short reason\"}],"
+                "\"claims\":[{\"text\":\"only external-world claim, not player promise or navigation chatter\",\"claim_type\":\"world_fact|rumor|observation|player_intention|navigation_status|opinion\",\"object_kind\":\"campfire|food_crate|water_source|cave_entrance|broken_radio|shelter|medkit|knife|rope|poisonous_berries|journal_page|locked_supply_box|\",\"confidence\":0.0}],"
+                "\"emotional_tone\":\"neutral|friendly|fearful|hostile|urgent|manipulative\","
+                "\"summary\":\"one sentence\","
+                "\"confidence\":0.0"
+                "}\n"
+                "If the player says they will follow the listener or go behind them, use action=player_follow_agent and do not create a claim.\n"
+                "If the player asks, suggests, orders, or invites the listener to go/check/lead toward a known object, use action=go_to_object.\n"
+                "Only put statements about the external world in claims; do not store player intentions, promises, or current chat coordination as claims.\n"
+                f"Listener: {agent.name}. Known objects: campfire, food_crate, water_source, cave_entrance, broken_radio, shelter, medkit, knife, rope, poisonous_berries, journal_page, locked_supply_box.\n"
+                f"Player message: {message}"
+            )
+            payload = {
+                "agent_id": agent.id,
+                "message": prompt,
+                "session_id": "island_demo_semantic_parser",
+                "agent_mode": "assistant",
+                "world_id": "island_demo",
+                "short_term_limit": 0,
+                "include_goals": False,
+                "include_procedural_skills": False,
+                "include_knowledge_relations": False,
+                "include_entity_states": False,
+                "enable_cognitive_field": False,
+                "enable_self_model": False,
+                "enable_reflection_loop": False,
+                "reflection_store_proposals": False,
+            }
+            response = requests.post(f"{self.base_url}/chat", json=payload, timeout=max(self.timeout, 20.0))
+            if response.status_code >= 400:
+                self.last_status = f"MOZOK semantic fallback: HTTP {response.status_code}: {response.text[:160]}"
+                return self.fallback.interpret_speech(world, agent, message)
+            data = response.json()
+            raw = str(data.get("response") or "").strip()
+            parsed_json = self._extract_json(raw)
+            parsed = parsed_speech_from_dict(message, parsed_json)
+            self.last_status = f"MOZOK semantic parse OK: {agent.name} ({parsed.confidence:.2f})"
+            return parsed
+        except Exception as exc:
+            self.last_status = f"MOZOK semantic fallback: {type(exc).__name__}: {str(exc)[:160]}"
+            return self.fallback.interpret_speech(world, agent, message)
 
     def _post_world_event(self, world: WorldState, agent: Agent, event: WorldEvent) -> None:
         payload = {
@@ -305,6 +382,34 @@ class MozokHttpClient:
 
         if tool_name == "move_to_object":
             parameters.setdefault("object_id", target_hint.id if target_hint else None)
+        if tool_name == "talk_to_agent":
+            if not parameters.get("target_agent_id"):
+                nearby = [
+                    other
+                    for other in world.agents.values()
+                    if other.id != agent.id and other.alive and other.position.manhattan(agent.position) <= 3
+                ]
+                if nearby:
+                    parameters["target_agent_id"] = min(nearby, key=lambda other: other.position.manhattan(agent.position)).id
+            return AgentIntent(
+                agent_id=agent.id,
+                action_kind="speak",
+                tool_name="talk_to_agent",
+                parameters=parameters,
+                dialogue=selected.get("dialogue") or self._api_agent_dialogue(world, agent, parameters, rationale),
+                emotion=agent.emotion,
+                rationale=f"MOZOK API: {rationale}",
+            )
+        if tool_name in {"give_item", "use_inventory_item"}:
+            return AgentIntent(
+                agent_id=agent.id,
+                action_kind="game_command",
+                tool_name=tool_name,
+                parameters=parameters,
+                dialogue=selected.get("dialogue") or "",
+                emotion=agent.emotion,
+                rationale=f"MOZOK API: {rationale}",
+            )
         if tool_name == "talk_to_player" or action_kind == "speak":
             return AgentIntent(
                 agent_id=agent.id,
@@ -315,7 +420,7 @@ class MozokHttpClient:
                 emotion=agent.emotion,
                 rationale=f"MOZOK API: {rationale}",
             )
-        if tool_name not in {"move_to_object", "wait"}:
+        if tool_name not in {"move_to_object", "wait", "give_item", "use_inventory_item"}:
             tool_name = "wait"
         return AgentIntent(
             agent_id=agent.id,
@@ -327,7 +432,26 @@ class MozokHttpClient:
             rationale=f"MOZOK API: {rationale}",
         )
 
+    def _apply_intent_trace(self, world: WorldState, agent: Agent, intent: AgentIntent) -> None:
+        object_id = str(intent.parameters.get("object_id") or "")
+        target_agent_id = str(intent.parameters.get("target_agent_id") or "")
+        agent.current_target_object_id = object_id
+        agent.current_target_agent_id = target_agent_id
+        if object_id and object_id in world.objects:
+            agent.current_plan = f"{intent.tool_name} -> {world.objects[object_id].name}"
+        elif target_agent_id and target_agent_id in world.agents:
+            agent.current_plan = f"{intent.tool_name} -> {world.agents[target_agent_id].name}"
+        elif intent.tool_name == "talk_to_player":
+            agent.current_plan = "talk_to_player -> You"
+        else:
+            agent.current_plan = intent.tool_name
+        agent.deliberation_summary = intent.rationale
+
     def _choose_target_object(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> WorldObject | None:
+        if "wounded" in agent.status_flags and "medkit" not in agent.inventory:
+            medkit = world.find_object_with_tag("medical")
+            if medkit:
+                return medkit
         if agent.needs.thirst > 55:
             return world.find_object_with_tag("water")
         if agent.needs.hunger > 60:
@@ -343,11 +467,40 @@ class MozokHttpClient:
 
     def _api_dialogue(self, agent: Agent, recent_events: list[WorldEvent], rationale: str) -> str:
         last = recent_events[-1].content if recent_events else "the island"
-        return f"{agent.name}: I'm thinking about this — {last} ({rationale[:80]})"
+        return f"{agent.name}: I'm thinking about this: {last} ({rationale[:80]})"
+
+    def _api_agent_dialogue(self, world: WorldState, agent: Agent, parameters: dict[str, Any], rationale: str) -> str:
+        target = world.agents.get(str(parameters.get("target_agent_id", "")))
+        if target:
+            return f"{agent.name}: {target.name}, compare notes with me. I am choosing this because {rationale[:90]}."
+        return f"{agent.name}: We need to compare notes before the island decides for us. ({rationale[:90]})"
 
     def _group_transcript(self, world: WorldState) -> str:
         lines = [f"[{item.turn:03d}] {item.speaker_name}: {item.content}" for item in world.chat_log[-8:]]
         return "\n".join(lines) if lines else "No prior group chat in this scene."
+
+    def _claim_context(self, world: WorldState, agent: Agent) -> str:
+        lines = [
+            f"[{claim.turn:03d}] {claim.speaker_id} told {claim.listener_id}: {claim.text} type={claim.claim_type} target={claim.target_object_id or claim.object or 'none'} ({claim.truth_status})"
+            for claim in world.claim_log[-8:]
+            if claim.listener_id in {agent.id, "group"} or claim.speaker_id == "player"
+        ]
+        return "\n".join(lines) if lines else "No unverified claims recorded."
+
+    def _extract_json(self, text: str) -> dict[str, Any]:
+        clean = text.strip()
+        if clean.startswith("```"):
+            clean = clean.strip("`")
+            if clean.lower().startswith("json"):
+                clean = clean[4:].strip()
+        start = clean.find("{")
+        end = clean.rfind("}")
+        if start >= 0 and end > start:
+            clean = clean[start : end + 1]
+        parsed = json.loads(clean)
+        if not isinstance(parsed, dict):
+            raise ValueError("semantic parse response was not a JSON object")
+        return parsed
 
 
 def build_brain_client() -> BrainClient:
