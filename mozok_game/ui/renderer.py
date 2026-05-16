@@ -627,7 +627,7 @@ class Renderer:
         mid = self.pygame.Rect(rect.x + 456, rect.y + 34, 246, rect.h - 54)
         right = self.pygame.Rect(rect.x + 718, rect.y + 34, 206, rect.h - 54)
 
-        self._line(left.x, left.y, "Group Chat", PAPER, self.label)
+        self._line(left.x, left.y, "Conversation", PAPER, self.label)
         y = left.y + 26
         chat_lines = world.chat_log[-5:] if world.chat_log else []
         if chat_lines:
@@ -645,7 +645,7 @@ class Renderer:
                 y += 22
 
         agent = self._focused_agent(world)
-        self._line(mid.x, mid.y, "Cognitive Field", PAPER, self.label)
+        self._line(mid.x, mid.y, "Agent Focus", PAPER, self.label)
         if agent:
             score = f"{agent.brain_focus_score:.2f}" if agent.brain_focus_score else "local"
             self._line(mid.x, mid.y + 28, f"{agent.name} / {score}", (228, 233, 215), self.small)
@@ -653,10 +653,8 @@ class Renderer:
             for line in self._wrap(agent.brain_broadcast or agent.brain_focus, 29, 5):
                 self._line(mid.x, y, line, (230, 231, 215), self.small)
                 y += 19
-            self._line(mid.x, mid.bottom - 38, f"Risk: {agent.brain_risk}"[:30], (238, 214, 161), self.tiny)
-            self._line(mid.x, mid.bottom - 20, f"Intent: {agent.last_action}"[:30], (238, 214, 161), self.tiny)
 
-        self._line(right.x, right.y, "Memory Flash", PAPER, self.label)
+        self._line(right.x, right.y, "Memory Notes", PAPER, self.label)
         y = right.y + 28
         for flash in world.brain_flashes[-4:]:
             name = world.agents.get(flash.agent_id).name if world.agents.get(flash.agent_id) else flash.agent_id
@@ -696,13 +694,17 @@ class Renderer:
         target_ids = list(text_chat.get("target_ids", []))
         agents = [world.agents[agent_id] for agent_id in target_ids if agent_id in world.agents]
         names = ", ".join(agent.name for agent in agents) or "nobody"
+        mode = str(text_chat.get("mode", "group"))
+        title = str(text_chat.get("title") or ("Group Chat" if mode == "group" else "Talk"))
         rect = self.pygame.Rect(226, 74, 828, 500)
-        self._ornate_panel(rect, GREEN_PANEL, "Group Chat")
-        self._line(rect.x + 26, rect.y + 42, f"Nearby: {names}", PAPER, self.small)
+        self._ornate_panel(rect, GREEN_PANEL, title)
+        lead = f"Facing: {names}" if mode == "direct" else f"Nearby: {names}"
+        self._line(rect.x + 26, rect.y + 42, lead, PAPER, self.small)
 
         x = rect.x + 26
         y = rect.y + 76
-        for line in world.chat_log[-9:]:
+        visible_chat = self._chat_lines_for_targets(world, target_ids)
+        for line in visible_chat[-9:]:
             speaker_colour = (255, 241, 166) if line.source == "player" else (174, 220, 238)
             self._line(x, y, f"{line.speaker_name}:", speaker_colour, self.small)
             yy = y
@@ -719,7 +721,14 @@ class Renderer:
         text = str(text_chat.get("text", ""))
         cursor = "_" if (self.pygame.time.get_ticks() // 450) % 2 == 0 else ""
         self._line(input_rect.x + 14, input_rect.y + 13, (text + cursor)[-88:], INK, self.label)
-        self._line(rect.x + 26, rect.bottom - 26, "Type message / Enter send to all adjacent agents / Esc close", PAPER, self.small)
+        hint = "Type message / Enter send / Esc close" if mode == "direct" else "Type message / Enter send to adjacent agents / Esc close"
+        self._line(rect.x + 26, rect.bottom - 26, hint, PAPER, self.small)
+
+    def _chat_lines_for_targets(self, world: WorldState, target_ids: list[str]) -> list[Any]:
+        target_set = set(target_ids)
+        if not target_set:
+            return world.chat_log
+        return [line for line in world.chat_log if line.speaker_id == "player" or line.speaker_id in target_set]
 
     def _draw_minimap(self, world: WorldState, rect: Any) -> None:
         self.pygame.draw.rect(self.screen, (19, 19, 17), rect, border_radius=4)

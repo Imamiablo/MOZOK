@@ -154,10 +154,9 @@ class PygameApp:
         if key == pg.K_RETURN:
             text = self.text_chat.get("text", "").strip()
             targets = list(self.text_chat.get("target_ids", []))
-            self.text_chat = None
             if text and targets:
                 self._send_group_chat(text, targets)
-                run_agent_ticks(self.world, self.brain)
+                self.text_chat["text"] = ""
             return True
         return True
 
@@ -165,34 +164,21 @@ class PygameApp:
         front = self._front_position()
         front_agent = self._agent_at(front)
         if front_agent:
-            self._open_dialogue_menu(front_agent)
+            self._open_direct_chat(front_agent)
             return False
         front_object = self._object_at(front)
         if front_object:
             interact_with_object(self.world, front_object)
             return True
-        agents = self.world.nearby_agents(distance=1)
-        if agents:
-            self._open_dialogue_menu(agents[0])
-            return False
-        objects = self.world.nearby_objects(distance=1)
-        if objects:
-            interact_with_object(self.world, objects[0])
-            return True
-        self.world.log("player_interact_none", "There is nothing close enough to interact with.", tags=["interact"])
+        self.world.log("player_interact_none", "There is nobody and nothing directly in front of you.", tags=["interact"])
         return False
 
     def _talk(self) -> bool:
         front_agent = self._agent_at(self._front_position())
         if front_agent:
-            self._open_dialogue_menu(front_agent)
+            self._open_direct_chat(front_agent)
             return False
-        agents = self.world.nearby_agents(distance=2)
-        if agents:
-            self._open_dialogue_menu(agents[0])
-            return False
-        else:
-            self.world.log("player_talk_none", "You call out, but nobody is close enough to answer.", tags=["dialogue"])
+        self.world.log("player_talk_none", "Face an agent on the tile ahead before starting a direct conversation.", tags=["dialogue"])
         return False
 
     def _open_text_chat(self) -> None:
@@ -203,7 +189,18 @@ class PygameApp:
         target_ids = [agent.id for agent in agents]
         self.world.selected_agent_id = target_ids[0]
         self.text_chat = {
+            "mode": "group",
+            "title": "Group Chat",
             "target_ids": target_ids,
+            "text": "",
+        }
+
+    def _open_direct_chat(self, agent) -> None:
+        self.world.selected_agent_id = agent.id
+        self.text_chat = {
+            "mode": "direct",
+            "title": f"Talk to {agent.name}",
+            "target_ids": [agent.id],
             "text": "",
         }
 
@@ -213,13 +210,17 @@ class PygameApp:
             self.world.log("player_talk_none", "Nobody is close enough to answer.", tags=["dialogue"])
             return
         participant_names = [agent.name for agent in agents]
+        is_direct = len(agents) == 1
+        event_type = "player_direct_chat" if is_direct else "player_group_chat"
+        chat_tag = "direct_chat" if is_direct else "group_chat"
+        audience = participant_names[0] if is_direct else ", ".join(participant_names)
         self.world.chat("player", "You", text, source="player")
         self.world.log(
-            "player_group_chat",
-            f"You say to {', '.join(participant_names)}: {text}",
+            event_type,
+            f"You say to {audience}: {text}",
             source="player",
             salience=7,
-            tags=["dialogue", "player", "group_chat"],
+            tags=["dialogue", "player", chat_tag],
             metadata={"target_agent_ids": target_ids},
         )
         for agent in agents:
@@ -234,7 +235,7 @@ class PygameApp:
                 f"{agent.name}: {clean}",
                 source=agent.id,
                 salience=7,
-                tags=["dialogue", "agent", "group_chat"],
+                tags=["dialogue", "agent", chat_tag],
                 metadata={"agent_id": agent.id, "participants": participant_names},
             )
 

@@ -89,10 +89,9 @@ It creates scene textures, object sprites, character billboard sprites, and `pre
 - `S` / Down: step backward
 - `A` / Left: turn left
 - `D` / Right: turn right
-- `E`: interact with object ahead, or open dialogue with agent ahead
+- `E`: interact with the object ahead, or open direct free-text chat with the agent on the tile ahead
 - `T`: open free-text group chat with all agents on neighbouring tiles
-- `Enter`: send typed chat message
-- `1` / `2` / `3`: choose dialogue topic
+- `Enter`: send the current direct or group chat message
 - `Space`: wait / end turn
 - `Tab`: toggle debug overlay
 - `Esc`: quit
@@ -102,13 +101,13 @@ It creates scene textures, object sprites, character billboard sprites, and `pre
 1. Turn toward the camp and step around in first-person grid view.
 2. Move near the food crate and interact.
 3. Move near the spring and drink.
-4. Talk to Alice, Boris, or Mira.
+4. Face Alice, Boris, or Mira, press `E`, and type a direct question.
 5. Wait several turns.
 6. Watch agents move, become hungry/thirsty/tired/stressed, and change avatar emotion.
 7. Point at each agent's visible intent/rationale panel.
 8. Stand next to one or more agents, press `T`, type a question, and send it to the whole nearby group.
 9. In MOZOK API mode, each adjacent agent answers through `/chat` using its own memories, goals, entity state, and cognitive field.
-10. Choose a quick dialogue topic with `E` and show that the conversation can surface memory, intent, trust, fear, or suspicion.
+10. Keep the chat window open and show that replies stay readable instead of disappearing into the event feed.
 11. Inspect the cave, radio, or food crate and point at memory flashes.
 12. Open the event log/debug overlay and explain that these events are what MOZOK can consume.
 

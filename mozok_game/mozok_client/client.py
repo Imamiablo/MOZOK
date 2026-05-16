@@ -187,12 +187,13 @@ class MozokHttpClient:
 
             group_text = ", ".join(participant_names)
             transcript = self._group_transcript(world)
+            scene_kind = "direct chat" if participant_names == [agent.name] else "group chat"
             prompt = (
-                f"Island sandbox group chat. The player says: {message}\n"
-                f"Nearby participants: {group_text}.\n"
+                f"Island sandbox {scene_kind}. The player says: {message}\n"
+                f"Participants: {group_text}.\n"
                 f"You are {agent.name}. Reply as {agent.name}, in character, briefly but meaningfully. "
                 f"React to other nearby agents if useful. Do not narrate actions you cannot perform.\n"
-                f"Recent group transcript:\n{transcript}"
+                f"Recent conversation transcript:\n{transcript}"
             )
             payload = {
                 "agent_id": agent.id,
