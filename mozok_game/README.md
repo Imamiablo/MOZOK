@@ -12,6 +12,7 @@ This prototype is intentionally compact:
 - dialogue panel
 - avatar-expression panel
 - tactical minimap
+- asset-driven Class-of-Heroes-style 2.5D renderer
 - dialogue topic menu
 - free-text group chat through MOZOK `/chat`
 - memory flash feed
@@ -42,6 +43,45 @@ run_mozok_island_full.bat
 ```
 
 That launcher starts PostgreSQL, initialises the Mozok database, imports the island brain pack, starts the API on `http://127.0.0.1:8001`, and opens the game with API mode enabled.
+
+## Art packs
+
+The renderer uses a 2.5D dungeon-crawler layout with side party panels, a central pseudo-3D scene, and a bottom dialogue/brain panel. It automatically uses PNG assets from:
+
+```text
+mozok_game/data/art/island_ruins/
+```
+
+Useful drop-in paths:
+
+```text
+scene/backdrop.png
+scene/floor.png
+scene/wall.png
+objects/food_crate.png
+objects/campfire.png
+objects/cave_entrance.png
+characters/alice/curious.png
+characters/boris/suspicious.png
+characters/mira/afraid.png
+```
+
+Tile-specific floor and wall art can override the generic scene art:
+
+```text
+tiles/ruins/wall.png
+tiles/grass/floor.png
+```
+
+Missing assets are fine; the game draws a procedural map-aware 2.5D view.
+
+This repo also includes a local generator for the current demo pack:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\generate_island_ruins_art.py
+```
+
+It creates scene textures, object sprites, character billboard sprites, and `preview.png`.
 
 ## Controls
 

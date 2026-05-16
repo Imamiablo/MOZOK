@@ -45,8 +45,12 @@ class MapGrid:
             "~": ("water", False),
             "#": ("rock", False),
             "C": ("camp", True),
+            "F": ("camp", True),
+            "S": ("camp", True),
             "V": ("cave", True),
             "R": ("ruins", True),
+            "W": ("water", False),
+            "@": ("grass", True),
         }
         height = len(rows)
         width = max(len(row) for row in rows)

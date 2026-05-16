@@ -31,7 +31,7 @@ class PygameApp:
         self.dialogue_menu: dict | None = None
         self.text_chat: dict | None = None
         self.world.log("brain_mode", getattr(self.brain, "last_status", "Brain client ready"), source="game", salience=4, tags=["debug", "brain"])
-        width = 1180
+        width = 1280
         height = 720
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("MOZOK: Island Sandbox - First Person Prototype")
