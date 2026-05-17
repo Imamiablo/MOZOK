@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from mozok_game.engine.commitments import clear_legacy_commitment_cache, sync_legacy_commitment_cache
 from mozok_game.engine.models import Agent, Commitment, WorldObject
 from mozok_game.engine.world_state import WorldState
 
@@ -239,16 +240,13 @@ def apply_agent_decision(world: WorldState, agent: Agent, parsed: ParsedSpeech, 
         agent.current_target_object_id = ""
         agent.current_target_agent_id = ""
     elif decision.action == "stop_following":
-        agent.following_player = False
-        agent.command_target_object_id = ""
-        agent.command_reason = ""
         agent.command_interrupt_reason = ""
-        agent.command_hold_turns = 0
         if agent.active_commitment:
             agent.active_commitment.status = "interrupted"
             agent.active_commitment.interrupt_reason = "player ended commitment"
             agent.commitment_history.append(agent.active_commitment)
             agent.active_commitment = None
+        clear_legacy_commitment_cache(agent)
         agent.current_plan = "keep distance"
         agent.current_target_object_id = ""
         agent.current_target_agent_id = ""
@@ -272,14 +270,12 @@ def apply_agent_decision(world: WorldState, agent: Agent, parsed: ParsedSpeech, 
         agent.current_target_object_id = decision.target_object_id
         agent.current_target_agent_id = ""
     elif decision.action == "hostile_alarm":
-        agent.following_player = False
-        agent.command_target_object_id = ""
-        agent.command_hold_turns = 0
         if agent.active_commitment:
             agent.active_commitment.status = "interrupted"
             agent.active_commitment.interrupt_reason = "hostile social alarm"
             agent.commitment_history.append(agent.active_commitment)
             agent.active_commitment = None
+        clear_legacy_commitment_cache(agent)
         agent.current_plan = "hostile social alarm"
         agent.current_target_object_id = ""
         agent.current_target_agent_id = ""
@@ -343,13 +339,7 @@ def _start_commitment(
         betrayal_if_broken=True,
     )
     agent.active_commitment = commitment
-    agent.following_player = commitment_type == "follow"
-    agent.command_target_object_id = target_object_id
-    agent.command_reason = accepted_because
-    agent.command_source = "player"
-    agent.command_priority = priority
-    agent.command_started_turn = world.turn
-    agent.command_interrupt_reason = ""
+    sync_legacy_commitment_cache(agent)
     agent.command_hold_turns = 0
     world.log(
         "agent_commitment_started",

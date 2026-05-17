@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from mozok_game.engine.inventory import add_item, actor_name, has_item, item_capabilities, item_name, remove_item
-from mozok_game.engine.models import Agent, WorldObject
+from mozok_game.engine.inventory import add_item, actor_name, has_item, item_capabilities, item_name, item_properties, item_tags, remove_item
+from mozok_game.engine.models import WorldObject
 from mozok_game.engine.world_state import WorldState
 
 
@@ -37,22 +37,6 @@ GENERIC_PRIMITIVES = {
 }
 
 
-TARGET_PRIMITIVES: dict[str, set[str]] = {
-    "cave_entrance": {"inspect", "anchor", "climb", "test", "block"},
-    "locked_supply_box": {"inspect", "pry", "cut"},
-    "food_crate": {"inspect", "pry", "carry"},
-    "campfire": {"inspect", "burn", "prepare_food"},
-    "water_source": {"inspect", "test"},
-    "broken_radio": {"inspect", "repair", "pry"},
-    "shelter": {"inspect", "tie", "anchor", "repair"},
-    "poisonous_berries": {"inspect", "test", "cut", "consume"},
-    "knife": {"inspect", "carry"},
-    "rope": {"inspect", "carry"},
-    "medkit": {"inspect", "carry"},
-    "journal_page": {"inspect", "reveal", "carry"},
-}
-
-
 @dataclass(slots=True)
 class PrimitiveResult:
     ok: bool
@@ -63,7 +47,7 @@ class PrimitiveResult:
 
 
 def target_primitives(obj: WorldObject) -> set[str]:
-    primitives = set(TARGET_PRIMITIVES.get(obj.kind, set()))
+    primitives = set(obj.capability_accepts)
     for interaction in obj.interactions:
         if interaction in GENERIC_PRIMITIVES:
             primitives.add(interaction)
@@ -83,6 +67,14 @@ def target_primitives(obj: WorldObject) -> set[str]:
         primitives.update({"pry", "cut"})
     if "mystery" in obj.tags:
         primitives.update({"inspect", "test"})
+    if "safety" in obj.tags:
+        primitives.update({"inspect", "anchor", "tie"})
+    if "toxic" in obj.tags or "unknown" in obj.tags:
+        primitives.update({"inspect", "test"})
+    if "evidence" in obj.tags or "lore" in obj.tags:
+        primitives.update({"inspect", "reveal"})
+    if "repair" in obj.interactions or "broken" in obj.tags:
+        primitives.update({"inspect", "repair", "pry"})
     return primitives
 
 
@@ -123,14 +115,10 @@ def execute_item_action(world: WorldState, actor_id: str, item_id: str, target_i
         return valid
 
     obj = world.objects.get(target_id) if target_id else None
-    if primitive == "pry" and obj and obj.kind == "locked_supply_box":
-        return _pry_lockbox(world, actor_id, item_id, obj, reason)
-    if primitive == "anchor" and obj and obj.kind == "cave_entrance":
-        return _anchor_cave(world, actor_id, item_id, obj, reason)
+    if obj and primitive in obj.capability_effects:
+        return _execute_data_effect(world, actor_id, item_id, obj, primitive, obj.capability_effects[primitive], reason)
     if primitive == "inspect":
         return _inspect_target(world, actor_id, item_id, obj, reason)
-    if primitive == "test" and obj and obj.kind == "poisonous_berries":
-        return _test_berries(world, actor_id, item_id, obj, reason)
     if primitive == "consume":
         return _consume_item(world, actor_id, item_id, reason)
     result = PrimitiveResult(
@@ -144,72 +132,90 @@ def execute_item_action(world: WorldState, actor_id: str, item_id: str, target_i
     return result
 
 
-def _pry_lockbox(world: WorldState, actor_id: str, item_id: str, obj: WorldObject, reason: str) -> PrimitiveResult:
-    if obj.state.get("open"):
-        result = PrimitiveResult(True, f"{actor_name(world, actor_id)} checks {obj.name}; it is already open.", "item_action", ["item", "inspect", "supplies"])
-        world.log(result.event_type, result.message, source=actor_id, tags=result.tags)
+def _execute_data_effect(world: WorldState, actor_id: str, item_id: str, obj: WorldObject, primitive: str, effect: Any, reason: str) -> PrimitiveResult:
+    if not isinstance(effect, dict):
+        return PrimitiveResult(False, f"{obj.name} has an invalid effect for {primitive}.", tags=["item", "invalid"])
+    if effect.get("requires_closed") and obj.state.get("open"):
+        result = PrimitiveResult(True, f"{actor_name(world, actor_id)} checks {obj.name}; it is already open.", "item_action", ["item", "inspect"])
+        world.log(result.event_type, result.message, source=actor_id, tags=result.tags, actor_id=actor_id, target_id=obj.id, item_id=item_id)
         return result
-    obj.state["open"] = True
-    add_item(world, actor_id, "ration")
-    add_item(world, actor_id, "rope")
-    message = f"{actor_name(world, actor_id)} pries open {obj.name} with {item_name(item_id)}. Inside: a ration and rope."
-    result = PrimitiveResult(
-        True,
-        message,
-        "item_action_pry",
-        ["item", "capability", "pry", "supplies", "tool"],
-        {"actor_id": actor_id, "item_id": item_id, "target_id": obj.id, "primitive": "pry", "gained": ["ration", "rope"], "reason": reason},
-    )
-    world.log(result.event_type, result.message, source=actor_id, salience=8, tags=result.tags, metadata=result.metadata)
-    return result
 
+    for key, value in dict(effect.get("target_state") or {}).items():
+        obj.state[str(key)] = _format_effect_value(value, world, actor_id, item_id, obj)
 
-def _anchor_cave(world: WorldState, actor_id: str, item_id: str, obj: WorldObject, reason: str) -> PrimitiveResult:
-    if obj.state.get("rope_anchored"):
-        result = PrimitiveResult(True, f"{actor_name(world, actor_id)} checks the rope already anchored at {obj.name}.", "item_action_anchor", ["item", "safety", "cave"])
-        world.log(result.event_type, result.message, source=actor_id, tags=result.tags)
-        return result
-    obj.state["rope_anchored"] = True
-    obj.state["anchored_by"] = actor_id
-    obj.state["anchored_item"] = item_id
-    remove_item(world, actor_id, item_id)
+    for grant in _as_list(effect.get("add_items")):
+        if not isinstance(grant, dict):
+            continue
+        recipient = actor_id if grant.get("actor") in {"self", "actor", None} else str(grant.get("actor"))
+        granted_item = str(grant.get("item_id") or "")
+        if granted_item:
+            add_item(world, recipient, granted_item)
+
+    if effect.get("consume_item"):
+        remove_item(world, actor_id, item_id)
+
     agent = world.agents.get(actor_id)
     if agent:
-        agent.needs.stress = max(0.0, agent.needs.stress - 14.0)
-        agent.social_to_player.fear = max(0.0, agent.social_to_player.fear - 5.0)
+        for need_name, delta in dict(effect.get("agent_need_delta") or {}).items():
+            if hasattr(agent.needs, str(need_name)):
+                setattr(agent.needs, str(need_name), float(getattr(agent.needs, str(need_name))) + float(delta))
+        agent.needs.clamp()
+        for social_name, delta in dict(effect.get("agent_social_delta") or {}).items():
+            if hasattr(agent.social_to_player, str(social_name)):
+                setattr(agent.social_to_player, str(social_name), float(getattr(agent.social_to_player, str(social_name))) + float(delta))
         agent.social_to_player.clamp()
-    message = f"{actor_name(world, actor_id)} anchors {item_name(item_id)} at {obj.name}, making the cave approach feel less reckless."
+
+    claim = effect.get("claim")
+    if isinstance(claim, dict):
+        world.claim(
+            speaker_id=str(_format_effect_value(claim.get("speaker_id", actor_id), world, actor_id, item_id, obj)),
+            listener_id=str(_format_effect_value(claim.get("listener_id", "group"), world, actor_id, item_id, obj)),
+            text=str(_format_effect_value(claim.get("text", ""), world, actor_id, item_id, obj)),
+            truth_status=str(claim.get("truth_status", "verified")),
+            confidence=float(claim.get("confidence", 0.8)),
+            object=str(_format_effect_value(claim.get("object", obj.kind), world, actor_id, item_id, obj)),
+            claim_type=str(claim.get("claim_type", "evidence")),
+            target_object_id=str(_format_effect_value(claim.get("target_object_id", obj.id), world, actor_id, item_id, obj)),
+        )
+
+    flash = effect.get("flash")
+    if isinstance(flash, dict) and actor_id in world.agents:
+        world.flash(
+            actor_id,
+            str(flash.get("title") or "Item effect"),
+            str(flash.get("content") or "The item changed the local plan."),
+            kind=str(flash.get("kind") or "decision"),
+            intensity=float(flash.get("intensity", 0.7)),
+        )
+
+    message = str(effect.get("message") or "{actor} uses {item} on {target}.")
+    message = _format_effect_text(message, world, actor_id, item_id, obj)
     result = PrimitiveResult(
         True,
         message,
-        "item_action_anchor",
-        ["item", "capability", "anchor", "safety", "cave", "tool"],
-        {"actor_id": actor_id, "item_id": item_id, "target_id": obj.id, "primitive": "anchor", "reason": reason},
+        str(effect.get("event_type") or "item_action"),
+        list(effect.get("tags") or ["item", "capability", primitive]),
+        {"actor_id": actor_id, "item_id": item_id, "target_id": obj.id, "primitive": primitive, "reason": reason, "data_driven": True},
     )
-    world.log(result.event_type, result.message, source=actor_id, salience=9, tags=result.tags, metadata=result.metadata)
-    world.flash(actor_id, "Safety plan", "Rope converted cave fear into a concrete precaution.", kind="decision", intensity=0.82)
+    world.log(
+        result.event_type,
+        result.message,
+        source=actor_id,
+        salience=float(effect.get("salience", 6)),
+        tags=result.tags,
+        metadata=result.metadata,
+        actor_id=actor_id,
+        target_id=obj.id,
+        item_id=item_id,
+    )
     return result
 
 
 def _inspect_target(world: WorldState, actor_id: str, item_id: str, obj: WorldObject | None, reason: str) -> PrimitiveResult:
     if not obj:
         return PrimitiveResult(False, "There is no target to inspect.", tags=["item", "invalid"])
-    if obj.kind == "cave_entrance":
-        agent = world.agents.get(actor_id)
-        if agent:
-            risk_reduction = 8.0 if obj.state.get("rope_anchored") else 0.0
-            agent.needs.stress += max(3.0, 10.0 - risk_reduction)
-            agent.needs.curiosity = max(0.0, agent.needs.curiosity - 15.0)
-            agent.needs.clamp()
-        message = f"{actor_name(world, actor_id)} inspects {obj.name}; the cave clicks back like something listening."
-        tags = ["agent", "inspect", "cave", "mystery"]
-    elif obj.kind == "journal_page":
-        world.claim("journal_page", "group", "A torn journal page says the cave machinery wakes when people gather near it.", truth_status="verified", confidence=0.85, object="cave_entrance", claim_type="evidence", target_object_id="cave_01")
-        message = f"{actor_name(world, actor_id)} reads {obj.name} and surfaces evidence about the cave machinery."
-        tags = ["item", "inspect", "evidence", "cave", "mystery"]
-    else:
-        message = f"{actor_name(world, actor_id)} inspects {obj.name} with {item_name(item_id)}."
-        tags = ["item", "inspect", "capability"]
+    message = f"{actor_name(world, actor_id)} inspects {obj.name} with {item_name(item_id)}."
+    tags = ["item", "inspect", "capability", *[tag for tag in obj.tags if tag in {"mystery", "danger", "evidence", "food", "tool", "safety"}]]
     result = PrimitiveResult(
         True,
         message,
@@ -221,55 +227,40 @@ def _inspect_target(world: WorldState, actor_id: str, item_id: str, obj: WorldOb
     return result
 
 
-def _test_berries(world: WorldState, actor_id: str, item_id: str, obj: WorldObject, reason: str) -> PrimitiveResult:
-    obj.state["tested_poisonous"] = True
-    world.claim("test", "group", "The berries show signs of toxicity when tested.", truth_status="verified", confidence=0.9, object="poisonous_berries", claim_type="evidence", target_object_id=obj.id)
-    message = f"{actor_name(world, actor_id)} tests {obj.name} with {item_name(item_id)}. The result looks poisonous enough to avoid."
-    result = PrimitiveResult(
-        True,
-        message,
-        "item_action_test",
-        ["item", "capability", "test", "toxic", "evidence", "food"],
-        {"actor_id": actor_id, "item_id": item_id, "target_id": obj.id, "primitive": "test", "reason": reason},
-    )
-    world.log(result.event_type, result.message, source=actor_id, salience=8, tags=result.tags, metadata=result.metadata)
-    return result
-
-
 def _consume_item(world: WorldState, actor_id: str, item_id: str, reason: str) -> PrimitiveResult:
-    if item_id == "ration":
-        remove_item(world, actor_id, item_id)
-        agent = world.agents.get(actor_id)
-        if agent:
-            agent.needs.hunger = max(0.0, agent.needs.hunger - 48.0)
-        else:
-            world.player.hunger = max(0.0, world.player.hunger - 48.0)
-        message = f"{actor_name(world, actor_id)} eats a ration from inventory."
-        tags = ["item", "capability", "consume", "food"]
-    elif item_id == "poison_berries":
-        remove_item(world, actor_id, item_id)
-        agent = world.agents.get(actor_id)
-        if agent:
-            agent.needs.hunger = max(0.0, agent.needs.hunger - 20.0)
-            agent.health = max(1.0, agent.health - 10.0)
-            agent.needs.stress += 10.0
-            agent.needs.clamp()
-        else:
-            world.player.hunger = max(0.0, world.player.hunger - 20.0)
-            world.player.health = max(1.0, world.player.health - 10.0)
-        message = f"{actor_name(world, actor_id)} eats suspicious berries and immediately pays for the risk."
-        tags = ["item", "capability", "consume", "food", "toxic", "danger"]
-    else:
+    tags = item_tags(item_id)
+    props = item_properties(item_id)
+    if "consume" not in item_capabilities(item_id) and "consumable" not in tags:
         message = f"{actor_name(world, actor_id)} cannot safely consume {item_name(item_id)}."
         result = PrimitiveResult(False, message, tags=["item", "invalid"])
         world.log("item_action_rejected", message, source=actor_id, tags=result.tags)
         return result
+    remove_item(world, actor_id, item_id)
+    nutrition = max(0.0, min(1.0, float(props.get("nutrition", 0.25))))
+    danger = max(0.0, min(1.0, float(props.get("danger", 0.0))))
+    hunger_delta = 74.0 * nutrition
+    agent = world.agents.get(actor_id)
+    if agent:
+        agent.needs.hunger = max(0.0, agent.needs.hunger - hunger_delta)
+        if danger:
+            agent.health = max(1.0, agent.health - 14.0 * danger)
+            agent.needs.stress += 12.0 * danger
+        agent.needs.clamp()
+    else:
+        world.player.hunger = max(0.0, world.player.hunger - hunger_delta)
+        if danger:
+            world.player.health = max(1.0, world.player.health - 14.0 * danger)
+    danger_line = " and immediately pays for the risk" if danger >= 0.45 else ""
+    message = f"{actor_name(world, actor_id)} consumes {item_name(item_id)}{danger_line}."
+    event_tags = ["item", "capability", "consume", *sorted(tags & {"food", "toxic", "medical", "danger"})]
+    if danger:
+        event_tags.append("danger")
     result = PrimitiveResult(
         True,
         message,
         "item_action_consume",
-        tags,
-        {"actor_id": actor_id, "item_id": item_id, "primitive": "consume", "reason": reason},
+        event_tags,
+        {"actor_id": actor_id, "item_id": item_id, "primitive": "consume", "reason": reason, "nutrition": nutrition, "danger": danger},
     )
     world.log(result.event_type, result.message, source=actor_id, salience=7, tags=result.tags, metadata=result.metadata)
     return result
@@ -280,6 +271,32 @@ def _actor_near_object(world: WorldState, actor_id: str, obj: WorldObject) -> bo
         return world.player.position.manhattan(obj.position) <= 1
     actor = world.agents.get(actor_id)
     return bool(actor and actor.position.manhattan(obj.position) <= 1)
+
+
+def _format_effect_text(template: str, world: WorldState, actor_id: str, item_id: str, obj: WorldObject) -> str:
+    return template.format(
+        actor=actor_name(world, actor_id),
+        actor_id=actor_id,
+        item=item_name(item_id),
+        item_id=item_id,
+        target=obj.name,
+        target_id=obj.id,
+        target_kind=obj.kind,
+    )
+
+
+def _format_effect_value(value: Any, world: WorldState, actor_id: str, item_id: str, obj: WorldObject) -> Any:
+    if isinstance(value, str):
+        return _format_effect_text(value, world, actor_id, item_id, obj)
+    return value
+
+
+def _as_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if value is None:
+        return []
+    return [value]
 
 
 def _clean_primitive(value: str) -> str:

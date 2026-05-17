@@ -108,6 +108,13 @@ class Agent:
     values: list[str] = field(default_factory=list)
     fears: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
+    appearance: dict[str, Any] = field(default_factory=dict)
+    voice: dict[str, Any] = field(default_factory=dict)
+    limits: list[str] = field(default_factory=list)
+    temptations: list[str] = field(default_factory=list)
+    stress_response: list[str] = field(default_factory=list)
+    authority_response: list[str] = field(default_factory=list)
+    trust_response: list[str] = field(default_factory=list)
     action_biases: dict[str, float] = field(default_factory=dict)
     needs: Needs = field(default_factory=Needs)
     social_to_player: SocialState = field(default_factory=SocialState)
@@ -130,6 +137,7 @@ class Agent:
     current_target_object_id: str = ""
     current_target_agent_id: str = ""
     memory_snippets: list[str] = field(default_factory=list)
+    # Derived HUD/cache fields for older UI paths. Active Commitment is the source of truth.
     following_player: bool = False
     command_target_object_id: str = ""
     command_reason: str = ""
@@ -198,6 +206,8 @@ class WorldObject:
     interactions: list[str]
     tags: list[str] = field(default_factory=list)
     state: dict[str, Any] = field(default_factory=dict)
+    capability_accepts: list[str] = field(default_factory=list)
+    capability_effects: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -210,6 +220,15 @@ class WorldEvent:
     salience: float = 5.0
     tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    actor_id: str = ""
+    target_id: str = ""
+    item_id: str = ""
+    location_id: str = ""
+    witness_ids: list[str] = field(default_factory=list)
+    visibility: str = "public"
+    reliability: float = 1.0
+    truth_status: str = "observed"
+    idempotency_key: str = ""
 
 
 @dataclass(slots=True)

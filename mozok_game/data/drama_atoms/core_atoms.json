@@ -1,0 +1,67 @@
+[
+  {
+    "id": "demand_resource_rules",
+    "kind": "demand",
+    "label": "demand resource rules",
+    "activated_by": ["scarcity", "authority"],
+    "event_tags": ["food", "supplies", "scarce", "social_risk"],
+    "actor_bias": { "dominance": 0.9, "caution": 0.45, "agreeableness": -0.35, "empathy": -0.15 },
+    "social_bias": { "low_trust": 0.45, "resentment": 0.35 },
+    "target_tags": ["food", "supplies"],
+    "tool_name": "talk_to_player",
+    "dialogue_template": "{actor}: We need rules for the supplies before hunger starts making rules for us."
+  },
+  {
+    "id": "guard_shared_resource",
+    "kind": "guard_resource",
+    "label": "guard shared resource",
+    "activated_by": ["scarcity", "authority"],
+    "event_tags": ["food", "supplies"],
+    "actor_bias": { "dominance": 0.55, "caution": 0.7, "pragmatism": 0.45 },
+    "social_bias": { "low_trust": 0.25 },
+    "target_tags": ["food", "supplies"],
+    "tool_name": "move_to_object"
+  },
+  {
+    "id": "investigate_mystery",
+    "kind": "investigate",
+    "label": "investigate mystery",
+    "activated_by": ["mystery", "opportunity"],
+    "event_tags": ["cave", "mystery", "radio", "sound"],
+    "actor_bias": { "curiosity": 0.95, "caution": -0.35, "anxiety": -0.25 },
+    "target_tags": ["mystery"],
+    "tool_name": "move_to_object"
+  },
+  {
+    "id": "warn_about_danger",
+    "kind": "warn",
+    "label": "warn about danger",
+    "activated_by": ["danger", "dependency"],
+    "event_tags": ["danger", "toxic", "cave", "weather", "sound"],
+    "actor_bias": { "empathy": 0.65, "caution": 0.65, "anxiety": 0.35 },
+    "tool_name": "talk_to_player",
+    "dialogue_template": "{actor}: Slow down. This is exactly when people get hurt because they want answers too fast."
+  },
+  {
+    "id": "comfort_stressed_agent",
+    "kind": "comfort",
+    "label": "comfort stressed agent",
+    "activated_by": ["dependency", "instability"],
+    "event_tags": ["danger", "medical", "conflict", "social_risk"],
+    "actor_bias": { "empathy": 0.9, "agreeableness": 0.4, "dominance": -0.2 },
+    "target_agent_bias": { "stress": 0.5, "wounded": 0.4 },
+    "tool_name": "talk_to_agent",
+    "dialogue_template": "{actor}: {target}, stay with me for a moment. One breath, then the next decision."
+  },
+  {
+    "id": "test_uncertain_food",
+    "kind": "test_claim",
+    "label": "test uncertain food",
+    "activated_by": ["scarcity", "moral_pressure"],
+    "event_tags": ["toxic", "unknown", "food"],
+    "actor_bias": { "caution": 0.65, "curiosity": 0.35, "empathy": 0.25 },
+    "target_tags": ["toxic", "unknown", "food"],
+    "required_capability": "test",
+    "tool_name": "use_item_on_target"
+  }
+]

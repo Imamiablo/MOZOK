@@ -1,0 +1,35 @@
+[
+  {
+    "id": "rain_squall",
+    "title": "Cold Rain Squall",
+    "tags": ["weather", "survival", "exhaustion"],
+    "requires": {
+      "turn_gte": 6,
+      "pressure_lte": { "exhaustion": 0.72, "danger": 0.82 },
+      "pressure_sum_gt": { "axes": ["scarcity", "mystery"], "value": 0.08 }
+    },
+    "effects": [
+      {
+        "type": "log",
+        "event_type": "weather_rain_squall",
+        "message": "Cold rain rolls over the camp. The fire hisses and everyone starts losing warmth.",
+        "source": "weather",
+        "salience": 9,
+        "tags": ["weather", "cold", "rain", "survival"]
+      },
+      {
+        "type": "agent_need_delta_if_unprotected",
+        "protected_near_kinds": ["campfire", "shelter"],
+        "protected_distance": 2,
+        "protected_delta": { "fatigue": 4, "stress": 3 },
+        "unprotected_delta": { "fatigue": 12, "stress": 10 },
+        "unprotected_flash": {
+          "title": "Cold stress",
+          "content": "Rain made shelter and fire immediately more important.",
+          "kind": "body",
+          "intensity": 0.7
+        }
+      }
+    ]
+  }
+]

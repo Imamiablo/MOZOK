@@ -23,7 +23,7 @@ def interact_with_object(world: WorldState, obj: WorldObject) -> None:
             return
         obj.state["taken"] = True
         add_item(world, "player", item_id)
-        world.log("player_take_item", f"You pick up {item_name(item_id)}.", tags=["item", "inventory", obj.kind], metadata={"item_id": item_id, "object_id": obj.id})
+        world.log("player_take_item", f"You pick up {item_name(item_id)}.", tags=["item", "inventory", obj.kind], metadata={"item_id": item_id, "object_id": obj.id}, actor_id="player", target_id=obj.id, item_id=item_id, visibility="witnessed")
         if obj.kind == "journal_page":
             world.claim("journal_page", "group", "A torn journal page says the cave machinery wakes when people gather near it.", truth_status="verified", confidence=0.85, object="cave_entrance", claim_type="evidence", target_object_id="cave_01")
             curious = max(world.agents.values(), key=lambda agent: agent.traits.get("curiosity", 0.0), default=None)
@@ -37,7 +37,7 @@ def interact_with_object(world: WorldState, obj: WorldObject) -> None:
             return
         obj.state["berries"] = amount - 1
         add_item(world, "player", "poison_berries")
-        world.log("player_take_berries", f"You pick a handful of suspicious berries. Berries left: {obj.state['berries']}.", tags=["item", "food", "toxic", "social_risk"], metadata={"item_id": "poison_berries"})
+        world.log("player_take_berries", f"You pick a handful of suspicious berries. Berries left: {obj.state['berries']}.", tags=["item", "food", "toxic", "social_risk"], metadata={"item_id": "poison_berries"}, actor_id="player", target_id=obj.id, item_id="poison_berries", visibility="witnessed")
         return
     if obj.kind == "locked_supply_box":
         if obj.state.get("open"):
@@ -58,7 +58,7 @@ def interact_with_object(world: WorldState, obj: WorldObject) -> None:
             obj.state["food"] = amount - 1
             world.player.inventory.append("ration")
             trigger_scripted_moment(world, "food_taken")
-            world.log("player_take_food", f"You take one ration from {obj.name}. Food left: {obj.state['food']}.", tags=["food", "social_risk"])
+            world.log("player_take_food", f"You take one ration from {obj.name}. Food left: {obj.state['food']}.", tags=["food", "social_risk"], actor_id="player", target_id=obj.id, item_id="ration", visibility="witnessed")
         else:
             world.log("food_crate_empty", f"{obj.name} is empty. That will not make the camp calmer.", tags=["food", "conflict"])
         return

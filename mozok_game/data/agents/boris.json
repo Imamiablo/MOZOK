@@ -2,5 +2,35 @@
   "id": "boris",
   "name": "Boris",
   "mode": "simulacra_npc",
-  "summary": "Practical survivor who protects supplies and distrusts reckless behaviour."
+  "role": "practical survivor",
+  "avatar_folder": "boris",
+  "personality": "Practical, suspicious, protective of supplies.",
+  "appearance": {
+    "silhouette": "broad",
+    "clothing": "worn jacket, practical boots",
+    "notable_features": "tired guarded eyes"
+  },
+  "voice": {
+    "tone": "blunt",
+    "style": "short sentences, practical, sceptical"
+  },
+  "traits": {
+    "dominance": 0.72,
+    "caution": 0.84,
+    "empathy": 0.34,
+    "curiosity": 0.22,
+    "agreeableness": 0.28,
+    "anxiety": 0.58,
+    "honesty": 0.46,
+    "loyalty": 0.38,
+    "pragmatism": 0.91
+  },
+  "values": ["survival", "control", "fairness_when_useful"],
+  "fears": ["starvation", "losing_control", "being_tricked"],
+  "temptations": ["hoard_resources", "challenge_weak_leadership", "threaten_when_cornered"],
+  "limits": ["avoids_useless_risk"],
+  "skills": ["guarding", "intimidation", "basic_repairs"],
+  "stress_response": ["control_resources", "challenge_authority", "make_rules"],
+  "authority_response": ["obeys_strength", "pushes_back_against_uncertainty"],
+  "trust_response": ["requires_proof", "respects_clear_rules"]
 }

@@ -146,6 +146,7 @@
       "position": [11, 3],
       "interactions": ["inspect", "repair"],
       "tags": ["radio", "mystery", "tool"],
+      "capability_accepts": ["inspect", "repair", "pry"],
       "state": { "inspected": false, "repair_progress": 0 }
     },
     {
@@ -155,6 +156,25 @@
       "position": [9, 9],
       "interactions": ["inspect", "enter"],
       "tags": ["cave", "danger", "mystery"],
+      "capability_accepts": ["inspect", "anchor", "climb", "test", "block"],
+      "capability_effects": {
+        "anchor": {
+          "event_type": "item_action_anchor",
+          "message": "{actor} anchors {item} at {target}, making the cave approach feel less reckless.",
+          "salience": 9,
+          "tags": ["item", "capability", "anchor", "safety", "cave", "tool"],
+          "target_state": { "rope_anchored": true, "anchored_by": "{actor_id}", "anchored_item": "{item_id}" },
+          "consume_item": true,
+          "agent_need_delta": { "stress": -14 },
+          "agent_social_delta": { "fear": -5 },
+          "flash": {
+            "title": "Safety plan",
+            "content": "Rope converted cave fear into a concrete precaution.",
+            "kind": "decision",
+            "intensity": 0.82
+          }
+        }
+      },
       "state": { "entered": false, "noise_level": 2 }
     },
     {
@@ -164,6 +184,26 @@
       "position": [2, 8],
       "interactions": ["pick", "inspect"],
       "tags": ["food", "toxic", "unknown", "plant"],
+      "capability_accepts": ["inspect", "test", "cut", "consume"],
+      "capability_effects": {
+        "test": {
+          "event_type": "item_action_test",
+          "message": "{actor} tests {target} with {item}. The result looks poisonous enough to avoid.",
+          "salience": 8,
+          "tags": ["item", "capability", "test", "toxic", "evidence", "food"],
+          "target_state": { "tested_poisonous": true },
+          "claim": {
+            "speaker_id": "test",
+            "listener_id": "group",
+            "text": "The berries show signs of toxicity when tested.",
+            "truth_status": "verified",
+            "confidence": 0.9,
+            "object": "poisonous_berries",
+            "claim_type": "evidence",
+            "target_object_id": "{target_id}"
+          }
+        }
+      },
       "state": { "berries": 3 }
     },
     {
@@ -209,6 +249,21 @@
       "position": [6, 4],
       "interactions": ["open", "inspect"],
       "tags": ["supplies", "locked", "tool_required"],
+      "capability_accepts": ["inspect", "pry", "cut"],
+      "capability_effects": {
+        "pry": {
+          "requires_closed": true,
+          "event_type": "item_action_pry",
+          "message": "{actor} pries open {target} with {item}. Inside: a ration and rope.",
+          "salience": 8,
+          "tags": ["item", "capability", "pry", "supplies", "tool"],
+          "target_state": { "open": true },
+          "add_items": [
+            { "actor": "self", "item_id": "ration" },
+            { "actor": "self", "item_id": "rope" }
+          ]
+        }
+      },
       "state": { "open": false }
     }
   ],

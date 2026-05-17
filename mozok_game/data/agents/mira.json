@@ -2,5 +2,32 @@
   "id": "mira",
   "name": "Mira",
   "mode": "simulacra_npc",
-  "summary": "Kind, frightened medic who wants the group to stay together."
+  "role": "frightened medic",
+  "avatar_folder": "mira",
+  "personality": "Kind, observant, easily frightened, tries to keep people together.",
+  "appearance": {
+    "silhouette": "small, tired",
+    "clothing": "field medic vest, rain-damp sleeves",
+    "notable_features": "pale face, careful hands"
+  },
+  "voice": {
+    "tone": "gentle but strained",
+    "style": "protective warnings, quiet observations"
+  },
+  "traits": {
+    "empathy": 0.86,
+    "anxiety": 0.76,
+    "caution": 0.74,
+    "curiosity": 0.34,
+    "dominance": 0.18,
+    "agreeableness": 0.78,
+    "honesty": 0.82,
+    "loyalty": 0.79
+  },
+  "values": ["protect_people", "avoid_needless_risk", "keep_group_together"],
+  "fears": ["abandonment", "injury", "dark_enclosed_places"],
+  "skills": ["medicine", "observation", "deescalation"],
+  "stress_response": ["seek_group", "warn", "freeze_then_help"],
+  "authority_response": ["follows_kind_leaders", "quietly_resists_cruelty"],
+  "trust_response": ["values_kindness", "hurt_by_betrayal"]
 }

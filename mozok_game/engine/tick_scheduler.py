@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mozok_game.engine.capabilities import execute_item_action
+from mozok_game.engine.commitments import clear_legacy_commitment_cache, sync_legacy_commitment_cache
 from mozok_game.engine.director import run_social_director, update_cognitive_trace
 from mozok_game.engine.interactions import talk_to_agent
 from mozok_game.engine.inventory import add_item, has_item, item_name, transfer_item
@@ -40,7 +41,11 @@ def run_agent_ticks(world: WorldState, brain: BrainClient) -> None:
 def _apply_player_commitment(world: WorldState, agent_id: str) -> bool:
     agent = world.agents[agent_id]
     if agent.active_commitment and agent.active_commitment.status == "active":
+        sync_legacy_commitment_cache(agent)
         return _apply_active_commitment(world, agent)
+    if agent.active_commitment and agent.active_commitment.status != "active":
+        agent.active_commitment = None
+        clear_legacy_commitment_cache(agent)
 
     if agent.following_player:
         interrupt = _commitment_interrupt_reason(world, agent)
@@ -140,8 +145,6 @@ def _apply_active_commitment(world: WorldState, agent) -> bool:
         return False
 
     if commitment.type == "follow":
-        agent.following_player = True
-        agent.command_target_object_id = ""
         agent.last_action = "follow_player"
         agent.last_rationale = commitment.accepted_because or commitment.goal
         agent.current_plan = f"commitment: follow -> You"
@@ -170,9 +173,6 @@ def _apply_active_commitment(world: WorldState, agent) -> bool:
         if not target_obj:
             _finish_commitment(world, agent, "failed", "target object disappeared")
             return False
-        agent.following_player = False
-        agent.command_target_object_id = target_obj.id
-        agent.command_reason = commitment.accepted_because
         agent.last_action = f"commitment_{commitment.type}"
         agent.last_rationale = commitment.accepted_because or commitment.goal
         agent.current_plan = f"commitment: {commitment.type} -> {target_obj.name}"
@@ -229,9 +229,7 @@ def _finish_commitment(world: WorldState, agent, status: str, reason: str) -> No
     commitment.interrupt_reason = "" if status == "succeeded" else reason
     agent.commitment_history.append(commitment)
     agent.active_commitment = None
-    agent.following_player = False
-    agent.command_target_object_id = ""
-    agent.command_reason = ""
+    clear_legacy_commitment_cache(agent, keep_hold=True)
     agent.command_interrupt_reason = "" if status == "succeeded" else reason
     world.log(
         "agent_commitment_finished",
@@ -260,10 +258,8 @@ def _interrupt_commitment(world: WorldState, agent, reason: str) -> None:
         agent.active_commitment.interrupt_reason = reason
         agent.commitment_history.append(agent.active_commitment)
         agent.active_commitment = None
+    clear_legacy_commitment_cache(agent)
     agent.command_interrupt_reason = reason
-    agent.following_player = False
-    agent.command_target_object_id = ""
-    agent.command_hold_turns = 0
     agent.last_action = "interrupt_task"
     agent.last_rationale = reason
     agent.current_plan = "interrupted player task"

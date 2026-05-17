@@ -856,6 +856,13 @@ class Renderer:
             lines.append(("body", "Fears: " + ", ".join(agent.fears[:5])))
         if agent.skills:
             lines.append(("body", "Skills: " + ", ".join(agent.skills[:5])))
+        if agent.voice:
+            voice = ", ".join(str(value) for value in agent.voice.values())
+            lines.append(("body", f"Voice: {voice}"))
+        if agent.stress_response:
+            lines.append(("body", "Stress response: " + ", ".join(agent.stress_response[:4])))
+        if agent.temptations:
+            lines.append(("body", "Temptations: " + ", ".join(agent.temptations[:4])))
         flags = ", ".join(agent.status_flags) if agent.status_flags else "none"
         lines.append(("body", f"Emotion: {agent.emotion} intensity {agent.emotion_intensity:.2f}. Health {agent.health:.0f}. Status: {flags}. Current goal: {agent.current_goal.replace('_', ' ')}."))
         lines.append(("subtle", f"Position {agent.position.x},{agent.position.y}. Last action: {agent.last_action}."))

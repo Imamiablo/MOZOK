@@ -17,7 +17,7 @@ This prototype is intentionally compact:
 - free-text group chat through MOZOK `/chat`
 - memory flash feed
 - cognitive-field/intent panel
-- scripted cave, radio, and food-supply moments
+- data-driven pressure/storylet moments for cave, radio, food, weather, and social stress
 - offline fallback brain so the demo works even without MOZOK running
 - optional MOZOK HTTP bridge for later integration
 
@@ -123,7 +123,7 @@ Each agent now builds a short list of possible actions before acting:
 - talk to another nearby agent to coordinate or challenge a concern
 - give an item to another agent when hunger, wounds, or trust make it useful
 - use carried inventory items such as rations or medkits
-- use an item's capability on an existing world object, such as `knife/pry/lockbox` or `rope/anchor/cave`
+- use an item's capability on an existing world object, such as any data-declared `pry`, `anchor`, `test`, `repair`, or `inspect` target
 - investigate mystery objects when curiosity beats fear
 - wait when nothing else is worth doing
 
@@ -134,10 +134,13 @@ The game engine still owns movement and world validation. MOZOK or the offline b
 The sandbox now has the first version of the generic simulation architecture:
 
 - character cards: traits, values, fears, skills, and personality are loaded from scenario data
-- item capability layer: items expose primitives like `consume`, `pry`, `anchor`, `inspect`, `test`, `give`, and `trade`
-- commitment objects: accepted player requests become active task records with type, target, constraints, expiry, and history
+- data-driven item capability layer: `data/items/items.json` defines tags, capabilities, and properties
+- data-driven target effects: scenario objects can declare `capability_accepts` and `capability_effects`; the capability executor no longer has island-specific branches for cave/lockbox/berries
+- commitment objects: accepted player requests become active task records with type, target, constraints, expiry, and history; old follow/target fields are now only derived UI/cache fields
 - pressure field: events move axes such as scarcity, danger, mystery, instability, authority, dependency, and exhaustion
-- storylet deck: the cold rain event is condition-driven instead of fixed to one turn
+- structured event ledger: world events carry actor, target, item, location, witnesses, visibility, reliability, truth status, and idempotency key
+- storylet deck: `data/storylets/storylets.json` defines condition-driven events such as cold rain
+- drama atoms and impulses: `data/drama_atoms/core_atoms.json` maps pressures + traits + recent events into candidate actions
 - authoritative state export: physical state stays owned by the game and is sent to MOZOK as structured context
 
 ## Items And World Pressure
@@ -154,6 +157,21 @@ The island now includes a first item/pressure pass:
 - wounded agent state
 
 Items can sit in the player inventory or an agent inventory. The player can pick up objects with `E`, give with `G`, and request with `R`. Agents can also pick up, use, and share items through their autonomous deliberation loop. New scenario items should be described with tags, capabilities, and properties rather than one-off scripted pairings.
+
+Objects can accept capabilities directly in scenario data:
+
+```json
+{
+  "kind": "custom_anchor",
+  "capability_accepts": ["anchor"],
+  "capability_effects": {
+    "anchor": {
+      "target_state": { "secured": true },
+      "consume_item": true
+    }
+  }
+}
+```
 
 ## What to show in a demo
 

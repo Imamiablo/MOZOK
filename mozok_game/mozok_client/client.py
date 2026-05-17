@@ -177,6 +177,11 @@ class MozokHttpClient:
                     "source": "mozok_island_sandbox",
                     "needs": asdict(agent.needs),
                     "social_to_player": asdict(agent.social_to_player),
+                    "traits": dict(agent.traits),
+                    "values": list(agent.values),
+                    "fears": list(agent.fears),
+                    "skills": list(agent.skills),
+                    "voice": dict(agent.voice),
                     "position": asdict(agent.position),
                     "target_hint": target_hint.id if target_hint else None,
                     "affordances": serialise_affordances(affordances),
@@ -323,7 +328,8 @@ class MozokHttpClient:
             return self.fallback.interpret_speech(world, agent, message)
 
     def _post_world_event(self, world: WorldState, agent: Agent, event: WorldEvent) -> None:
-        post_key = f"{agent.id}:{event.event_id}"
+        perception_id = f"{agent.id}:{event.event_id}"
+        post_key = f"{agent.id}:{event.idempotency_key or event.event_id}"
         if post_key in self._posted_event_ids:
             return
         payload = {
@@ -332,12 +338,22 @@ class MozokHttpClient:
                     "world_id": "island_demo",
                     "agent_id": agent.id,
                     "event_id": event.event_id,
+                    "world_event_id": event.event_id,
+                    "perception_id": perception_id,
+                    "idempotency_key": event.idempotency_key or event.event_id,
                     "event_type": event.event_type,
                     "content": event.content,
                     "source": event.source,
+                    "actor_id": event.actor_id,
+                    "target_id": event.target_id,
+                    "item_id": event.item_id,
+                    "location_id": event.location_id,
+                    "witness_ids": event.witness_ids,
+                    "visibility": event.visibility,
+                    "truth_status": event.truth_status,
                     "channel_hint": self._channel_for_event(event),
                     "salience": event.salience,
-                    "reliability": 1.0,
+                    "reliability": event.reliability,
                     "tags": event.tags,
                     "metadata": event.metadata,
                 }
@@ -355,11 +371,20 @@ class MozokHttpClient:
         return {
             "content": event.content,
             "event_id": event.event_id,
+            "world_event_id": event.event_id,
+            "idempotency_key": event.idempotency_key or event.event_id,
             "event_type": event.event_type,
             "source": event.source,
+            "actor_id": event.actor_id,
+            "target_id": event.target_id,
+            "item_id": event.item_id,
+            "location_id": event.location_id,
+            "witness_ids": event.witness_ids,
+            "visibility": event.visibility,
+            "truth_status": event.truth_status,
             "channel_hint": self._channel_for_event(event),
             "salience": event.salience,
-            "reliability": 1.0,
+            "reliability": event.reliability,
             "tags": event.tags,
             "metadata": event.metadata,
         }
@@ -369,9 +394,17 @@ class MozokHttpClient:
             "channel": self._channel_for_event(event),
             "content": event.content,
             "event_id": event.event_id,
+            "world_event_id": event.event_id,
+            "idempotency_key": event.idempotency_key or event.event_id,
+            "actor_id": event.actor_id,
+            "target_id": event.target_id,
+            "item_id": event.item_id,
+            "witness_ids": event.witness_ids,
+            "visibility": event.visibility,
+            "truth_status": event.truth_status,
             "intensity": max(0.1, min(10.0, event.salience)),
             "attention": max(0.1, min(10.0, event.salience)),
-            "confidence": 1.0,
+            "confidence": event.reliability,
             "source": event.source,
             "tags": event.tags,
             "metadata": event.metadata,

@@ -1,47 +1,24 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from mozok_game.engine.models import Agent
 from mozok_game.engine.world_state import WorldState
 
 
-ITEM_DEFS: dict[str, dict[str, object]] = {
-    "ration": {
-        "name": "Ration",
-        "tags": ["food", "safe", "consumable"],
-        "capabilities": ["consume", "give", "trade"],
-        "properties": {"nutrition": 0.65, "danger": 0.0, "size": "small"},
-    },
-    "poison_berries": {
-        "name": "Poison Berries",
-        "tags": ["food", "toxic", "unknown", "consumable"],
-        "capabilities": ["consume", "test", "give", "trade", "threaten"],
-        "properties": {"nutrition": 0.25, "danger": 0.75, "uncertainty": 0.9, "size": "small"},
-    },
-    "knife": {
-        "name": "Knife",
-        "tags": ["tool", "sharp", "weapon"],
-        "capabilities": ["cut", "pry", "threaten", "carve", "prepare_food", "test", "give", "trade"],
-        "properties": {"sharpness": 0.8, "durability": 0.72, "danger": 0.62, "size": "small"},
-    },
-    "rope": {
-        "name": "Rope",
-        "tags": ["tool", "climb", "safety", "bind"],
-        "capabilities": ["tie", "bind", "anchor", "drag", "climb", "set_trap", "give", "trade"],
-        "properties": {"length": 12, "durability": 0.62, "danger": 0.22, "size": "medium"},
-    },
-    "medkit": {
-        "name": "Medkit",
-        "tags": ["medical", "healing", "tool"],
-        "capabilities": ["treat", "inspect", "give", "trade"],
-        "properties": {"healing": 0.72, "charges": 1, "size": "small"},
-    },
-    "journal_page": {
-        "name": "Journal Page",
-        "tags": ["lore", "evidence", "cave"],
-        "capabilities": ["inspect", "reveal", "give", "trade"],
-        "properties": {"evidence": 0.85, "danger": 0.0, "size": "tiny"},
-    },
-}
+FALLBACK_ITEM_DEFS: dict[str, dict[str, object]] = {}
+
+
+def _load_item_defs() -> dict[str, dict[str, object]]:
+    path = Path(__file__).resolve().parents[1] / "data" / "items" / "items.json"
+    if not path.exists():
+        return dict(FALLBACK_ITEM_DEFS)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return {str(item_id): dict(config) for item_id, config in raw.items() if isinstance(config, dict)}
+
+
+ITEM_DEFS: dict[str, dict[str, object]] = _load_item_defs()
 
 
 def item_name(item_id: str) -> str:
@@ -121,6 +98,10 @@ def transfer_item(world: WorldState, from_actor_id: str, to_actor_id: str, item_
         salience=7,
         tags=["item", "inventory", "transfer"],
         metadata={"from": from_actor_id, "to": to_actor_id, "item_id": item_id, "reason": reason},
+        actor_id=from_actor_id,
+        target_id=to_actor_id,
+        item_id=item_id,
+        visibility="witnessed",
     )
     return True
 

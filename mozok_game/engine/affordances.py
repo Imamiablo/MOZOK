@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from mozok_game.engine.capabilities import target_primitives
+from mozok_game.engine.impulses import generate_impulses
 from mozok_game.engine.inventory import choose_item_for_agent_need, item_capabilities, item_name
 from mozok_game.engine.models import Agent, AgentIntent, WorldEvent, WorldObject
 from mozok_game.engine.world_state import WorldState
@@ -44,6 +45,7 @@ def build_agent_affordances(world: WorldState, agent: Agent, recent_events: list
     ]
     affordances.extend(_need_affordances(world, agent))
     affordances.extend(_item_capability_affordances(world, agent))
+    affordances.extend(_impulse_affordances(world, agent, recent_events))
     affordances.extend(_claim_affordances(world, agent))
     affordances.extend(_inventory_affordances(world, agent))
     affordances.extend(_social_affordances(world, agent, recent_events))
@@ -162,48 +164,47 @@ def _item_capability_affordances(world: WorldState, agent: Agent) -> list[Afford
     result: list[Affordance] = []
     for item_id in set(agent.inventory):
         capabilities = item_capabilities(item_id)
-        if "anchor" in capabilities:
-            cave = world.object_by_kind("cave_entrance")
-            if cave and not cave.state.get("rope_anchored"):
-                cave_salience = world.pressure.get("mystery", 0.0) + world.pressure.get("danger", 0.0)
-                stress = agent.needs.stress + agent.social_to_player.fear
-                if cave_salience > 0.08 or stress > 60:
-                    result.append(
-                        Affordance(
-                            "use_item_on_target",
-                            "anchor rope at cave",
-                            58.0 + cave_salience * 90.0 + min(24.0, stress * 0.18),
-                            {"item_id": item_id, "target_id": cave.id, "primitive": "anchor"},
-                            f"{item_name(item_id)} can reduce cave risk before investigation",
-                        )
-                    )
-        if "pry" in capabilities:
-            for obj in world.objects.values():
-                if obj.state.get("open") or "pry" not in target_primitives(obj):
+        for obj in world.objects.values():
+            if obj.state.get("taken"):
+                continue
+            supported = (capabilities & target_primitives(obj)) - {"carry", "consume", "drag", "give", "threaten", "throw", "trade"}
+            for primitive in sorted(supported):
+                if obj.state.get("open") and primitive in {"cut", "pry"}:
                     continue
-                if obj.kind == "locked_supply_box":
-                    result.append(
-                        Affordance(
-                            "use_item_on_target",
-                            f"pry open {obj.name}",
-                            72.0,
-                            {"item_id": item_id, "target_id": obj.id, "primitive": "pry"},
-                            f"{item_name(item_id)} supports pry and {obj.name} is locked",
-                        )
-                    )
-        if "test" in capabilities:
-            berries = world.object_by_kind("poisonous_berries")
-            if berries and not berries.state.get("tested_poisonous") and int(berries.state.get("berries", 0)) > 0:
+                if obj.state.get(f"{primitive}ed") or obj.state.get(f"{primitive}_done"):
+                    continue
+                score = _score_item_primitive(world, agent, obj, primitive)
+                if score < 34.0:
+                    continue
                 result.append(
                     Affordance(
                         "use_item_on_target",
-                        "test suspicious berries",
-                        42.0 + world.pressure.get("scarcity", 0.0) * 35.0,
-                        {"item_id": item_id, "target_id": berries.id, "primitive": "test"},
-                        f"{item_name(item_id)} can test uncertain food before anyone eats it",
+                        f"{primitive} {obj.name}",
+                        score,
+                        {"item_id": item_id, "target_id": obj.id, "primitive": primitive},
+                        f"{item_name(item_id)} supports {primitive}; {obj.name} accepts it via object data/tags",
                     )
                 )
     return result
+
+
+def _score_item_primitive(world: WorldState, agent: Agent, obj: WorldObject, primitive: str) -> float:
+    tags = set(obj.tags)
+    score = 18.0
+    if primitive in obj.capability_effects:
+        score += 20.0
+    if primitive in {"pry", "cut"} and ("locked" in tags or "tool_required" in tags):
+        score += 38.0 + world.pressure.get("opportunity", 0.0) * 20.0
+    if primitive == "anchor" and ({"danger", "mystery", "safety"} & tags):
+        stress = agent.needs.stress + agent.social_to_player.fear
+        score += 28.0 + (world.pressure.get("danger", 0.0) + world.pressure.get("mystery", 0.0)) * 90.0 + min(20.0, stress * 0.16)
+    if primitive == "test" and ({"food", "toxic", "unknown"} & tags):
+        score += 24.0 + world.pressure.get("scarcity", 0.0) * 35.0 + world.pressure.get("danger", 0.0) * 22.0
+    if primitive == "repair" and ("tool" in tags or "radio" in tags):
+        score += 20.0 + world.pressure.get("opportunity", 0.0) * 45.0
+    if primitive == "inspect" and ({"mystery", "danger", "evidence", "unknown", "tool"} & tags):
+        score += 12.0 + agent.traits.get("curiosity", 0.0) * 16.0
+    return score
 
 
 def _claim_affordances(world: WorldState, agent: Agent) -> list[Affordance]:
@@ -240,6 +241,22 @@ def _claim_affordances(world: WorldState, agent: Agent) -> list[Affordance]:
                     dialogue=f"{agent.name}: I need to be clear: you said '{claim.text}'. I am not treating it as fact yet.",
                 )
             )
+    return result
+
+
+def _impulse_affordances(world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> list[Affordance]:
+    result: list[Affordance] = []
+    for impulse in generate_impulses(world, agent, recent_events)[:4]:
+        result.append(
+            Affordance(
+                impulse.tool_name,
+                f"impulse: {impulse.label}",
+                impulse.score,
+                impulse.parameters,
+                impulse.reason,
+                impulse.dialogue,
+            )
+        )
     return result
 
 

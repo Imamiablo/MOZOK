@@ -2,11 +2,13 @@ from pathlib import Path
 
 from mozok_game.engine.capabilities import execute_item_action
 from mozok_game.engine.interactions import interact_with_object
-from mozok_game.engine.inventory import transfer_item
-from mozok_game.engine.models import Position
+from mozok_game.engine.inventory import item_capabilities, transfer_item
+from mozok_game.engine.models import Position, WorldObject
 from mozok_game.engine.pathfinding import next_step_towards
 from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import load_world
+from mozok_game.mozok_client import client as client_module
+from mozok_game.mozok_client.client import MozokHttpClient
 from mozok_game.mozok_client.client import OfflineMozokBrain
 
 
@@ -88,6 +90,54 @@ def test_item_capability_can_anchor_rope_at_cave():
     assert "rope" not in world.player.inventory
 
 
+def test_item_definitions_are_loaded_from_data_file():
+    assert "anchor" in item_capabilities("rope")
+    assert "pry" in item_capabilities("knife")
+
+
+def test_data_driven_target_effect_supports_new_object_without_python_branch():
+    world = load_world(base_dir())
+    anchor = WorldObject(
+        id="test_anchor_01",
+        name="Test Anchor",
+        kind="custom_anchor",
+        position=Position(world.player.position.x, world.player.position.y + 1),
+        interactions=["inspect"],
+        tags=["tool", "safety"],
+        capability_accepts=["anchor"],
+        capability_effects={
+            "anchor": {
+                "message": "{actor} anchors {item} to {target}.",
+                "tags": ["item", "capability", "anchor", "custom"],
+                "target_state": {"secured": True, "secured_by": "{actor_id}"},
+                "consume_item": True,
+            }
+        },
+    )
+    world.objects[anchor.id] = anchor
+    world.player.inventory.append("rope")
+
+    result = execute_item_action(world, "player", "rope", anchor.id, "anchor", "test")
+
+    assert result.ok
+    assert anchor.state["secured"] is True
+    assert anchor.state["secured_by"] == "player"
+    assert "rope" not in world.player.inventory
+
+
+def test_invalid_item_capability_is_rejected():
+    world = load_world(base_dir())
+    cave = world.objects["cave_01"]
+    world.player.position = Position(cave.position.x, cave.position.y - 1)
+    world.player.inventory.append("ration")
+
+    result = execute_item_action(world, "player", "ration", cave.id, "anchor", "test")
+
+    assert not result.ok
+    assert world.event_log[-1].event_type == "item_action_rejected"
+    assert world.event_log[-1].actor_id == "player"
+
+
 def test_inventory_transfer_between_player_and_agent():
     world = load_world(base_dir())
     alice = world.agents["alice"]
@@ -134,3 +184,80 @@ def test_agent_can_use_capability_tool_on_target():
 
     assert box.state["open"]
     assert "ration" in boris.inventory
+
+
+def test_world_events_have_structured_actor_target_item_and_witnesses():
+    world = load_world(base_dir())
+    event = world.log(
+        "item_taken",
+        "Player took a ration.",
+        tags=["food", "scarce", "witnessed"],
+        actor_id="player",
+        target_id="food_crate_01",
+        item_id="ration",
+        visibility="witnessed",
+    )
+
+    assert event.event_id.startswith("evt_")
+    assert event.actor_id == "player"
+    assert event.target_id == "food_crate_01"
+    assert event.item_id == "ration"
+    assert event.visibility == "witnessed"
+    assert event.witness_ids
+
+
+def test_world_events_have_truth_status_and_idempotency_key():
+    world = load_world(base_dir())
+
+    event = world.log(
+        "claim_test",
+        "A test event happened once.",
+        actor_id="player",
+        target_id="food_crate_01",
+        truth_status="verified",
+        idempotency_key="global:item_taken:food_crate_01:1",
+    )
+
+    assert event.truth_status == "verified"
+    assert event.idempotency_key == "global:item_taken:food_crate_01:1"
+    assert event.metadata["idempotency_key"] == event.idempotency_key
+
+
+def test_pressure_field_is_bounded_and_quiet_axes_decay():
+    world = load_world(base_dir())
+    world.pressure["danger"] = 0.99
+    world.pressure["scarcity"] = 0.5
+
+    for _ in range(30):
+        world.log("danger_test", "The situation is dangerous.", salience=10, tags=["danger"])
+
+    assert all(0.0 <= value <= 1.0 for value in world.pressure.values())
+    before = world.pressure["scarcity"]
+    world.log("quiet_test", "Nothing much happens.", salience=1, tags=[])
+    assert world.pressure["scarcity"] < before
+
+
+def test_mozok_event_post_uses_world_event_and_perception_ids_once():
+    world = load_world(base_dir())
+    agent = world.agents["alice"]
+    event = world.log("item_taken", "Player took a ration.", actor_id="player", item_id="ration", idempotency_key="global:item:1")
+    calls = []
+
+    class Response:
+        status_code = 200
+        text = ""
+
+    old_post = client_module.requests.post
+    try:
+        client_module.requests.post = lambda *args, **kwargs: calls.append(kwargs["json"]) or Response()
+        client = MozokHttpClient("http://example.test")
+        client._post_world_event(world, agent, event)
+        client._post_world_event(world, agent, event)
+    finally:
+        client_module.requests.post = old_post
+
+    assert len(calls) == 1
+    payload_event = calls[0]["events"][0]
+    assert payload_event["world_event_id"] == event.event_id
+    assert payload_event["perception_id"] == f"{agent.id}:{event.event_id}"
+    assert payload_event["idempotency_key"] == "global:item:1"

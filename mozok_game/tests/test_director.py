@@ -2,9 +2,11 @@ from pathlib import Path
 
 from mozok_game.engine.director import apply_dialogue_choice, build_dialogue_options, run_social_director, trigger_scripted_moment
 from mozok_game.engine.affordances import choose_offline_intent
-from mozok_game.engine.models import Position
+from mozok_game.engine.commitments import sync_legacy_commitment_cache
+from mozok_game.engine.impulses import generate_impulses
+from mozok_game.engine.models import Agent, Commitment, Needs, Position, SocialState
 from mozok_game.engine.speech_actions import apply_agent_decision, decide_agent_response, fallback_interpret_player_speech, parsed_speech_from_dict, record_player_claims
-from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
+from mozok_game.engine.tick_scheduler import _apply_player_commitment, apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import load_world
 from mozok_game.mozok_client.client import OfflineMozokBrain
 
@@ -162,6 +164,57 @@ def test_player_following_agent_is_not_recorded_as_suspicious_claim():
     assert "Cave Entrance" in decision.reply
 
 
+def test_commitment_expiry_clears_legacy_cache():
+    world = load_world(base_dir())
+    mira = world.agents["mira"]
+    mira.active_commitment = Commitment(
+        id="commit_test_expire",
+        agent_id=mira.id,
+        type="inspect",
+        target_object_id="cave_01",
+        goal="inspect cave entrance",
+        expiry_turns=1,
+        started_turn=0,
+        accepted_because="test",
+    )
+    sync_legacy_commitment_cache(mira)
+    assert mira.command_target_object_id == "cave_01"
+
+    world.turn = 3
+    handled = _apply_player_commitment(world, mira.id)
+
+    assert not handled
+    assert mira.active_commitment is None
+    assert not mira.following_player
+    assert mira.command_target_object_id == ""
+    assert mira.commitment_history[-1].status == "expired"
+
+
+def test_commitment_constraint_interrupt_clears_legacy_cache():
+    world = load_world(base_dir())
+    mira = world.agents["mira"]
+    mira.health = 30
+    mira.active_commitment = Commitment(
+        id="commit_test_interrupt",
+        agent_id=mira.id,
+        type="inspect",
+        target_object_id="cave_01",
+        goal="inspect cave entrance",
+        constraints={"avoid_if_health_below": 45},
+        started_turn=world.turn,
+        accepted_because="test",
+    )
+    sync_legacy_commitment_cache(mira)
+
+    handled = _apply_player_commitment(world, mira.id)
+
+    assert not handled
+    assert mira.active_commitment is None
+    assert not mira.following_player
+    assert mira.command_target_object_id == ""
+    assert mira.commitment_history[-1].status == "interrupted"
+
+
 def test_unverified_claim_becomes_deliberation_affordance():
     world = load_world(base_dir())
     alice = world.agents["alice"]
@@ -203,3 +256,34 @@ def test_storylet_director_uses_pressure_not_fixed_turn():
     assert "rain_squall" in world.scripted_flags
     assert any(event.event_type == "weather_rain_squall" for event in world.event_log)
     assert world.pressure["exhaustion"] > 0
+
+
+def test_dominant_low_trust_generic_agent_generates_resource_impulse_without_boris_id():
+    world = load_world(base_dir())
+    agent = Agent(
+        id="random_survivor_42",
+        name="Rhea",
+        role="generated survivor",
+        position=Position(6, 5),
+        avatar_folder="mira",
+        personality="Cautious, controlling, low-trust survivor.",
+        traits={"dominance": 0.82, "caution": 0.74, "agreeableness": 0.22, "empathy": 0.31},
+        values=["survival", "control"],
+        fears=["starvation"],
+        needs=Needs(hunger=58, thirst=30, fatigue=20, stress=32, social=30, curiosity=18),
+        social_to_player=SocialState(trust=20, fear=12, affinity=18, resentment=45),
+    )
+    world.agents = {agent.id: agent}
+    world.log(
+        "item_taken",
+        "Player took food.",
+        tags=["food", "scarce", "witnessed"],
+        actor_id="player",
+        target_id="food_crate_01",
+        item_id="ration",
+        visibility="witnessed",
+    )
+
+    impulses = generate_impulses(world, agent, world.event_log[-10:])
+
+    assert any(impulse.kind in {"demand", "guard_resource"} for impulse in impulses)

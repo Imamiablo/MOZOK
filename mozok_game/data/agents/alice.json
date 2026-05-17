@@ -2,5 +2,32 @@
   "id": "alice",
   "name": "Alice",
   "mode": "simulacra_npc",
-  "summary": "Curious, anxious survivor who is drawn to the cave mystery."
+  "role": "curious survivor",
+  "avatar_folder": "alice",
+  "personality": "Curious, anxious, clever, tempted by mysteries.",
+  "appearance": {
+    "silhouette": "slim",
+    "clothing": "rain-stained hoodie",
+    "notable_features": "restless eyes, scratched hands"
+  },
+  "voice": {
+    "tone": "quick, unfinished, observant",
+    "style": "asks questions before fear catches up"
+  },
+  "traits": {
+    "curiosity": 0.91,
+    "caution": 0.28,
+    "empathy": 0.58,
+    "dominance": 0.36,
+    "anxiety": 0.49,
+    "honesty": 0.73,
+    "loyalty": 0.62,
+    "agreeableness": 0.48
+  },
+  "values": ["truth", "discovery", "autonomy"],
+  "fears": ["being_controlled", "dying_without_answers"],
+  "skills": ["scavenging", "observation"],
+  "stress_response": ["investigate", "overfocus", "ask_questions"],
+  "authority_response": ["resists_control", "cooperates_when_respected"],
+  "trust_response": ["opens_up_to_honesty", "withdraws_from_manipulation"]
 }
