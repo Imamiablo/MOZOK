@@ -1,0 +1,968 @@
+{
+  "pack_id": "island_survival_objects",
+  "title": "Island Survival Objects",
+  "templates": {
+    "campfire": {
+      "name": "Campfire",
+      "kind": "campfire",
+      "aliases": [
+        "fire",
+        "camp fire",
+        "warm place"
+      ],
+      "object_type": "fixture",
+      "sprite": "objects/campfire.png",
+      "interactions": {
+        "light": {
+          "label": "Feed the campfire",
+          "primitive": "warm",
+          "affordance_tags": [
+            "cold",
+            "stress",
+            "safety",
+            "warmth"
+          ],
+          "set_state": {
+            "lit": true
+          },
+          "nearby_agent_need_delta": {
+            "distance": 3,
+            "delta": {
+              "stress": -8
+            }
+          },
+          "pressure_delta": {
+            "danger": -0.03,
+            "exhaustion": -0.02
+          },
+          "event_type": "campfire_lit",
+          "message": "{actor} feeds the campfire. The shadows step back for a while.",
+          "tags": [
+            "safety",
+            "camp",
+            "fire"
+          ]
+        },
+        "rest": {
+          "label": "Rest near the fire",
+          "primitive": "rest",
+          "affordance_tags": [
+            "recover",
+            "fatigue",
+            "stress",
+            "warmth"
+          ],
+          "actor_need_delta": {
+            "fatigue": -16,
+            "stress": -8
+          },
+          "pressure_delta": {
+            "exhaustion": -0.02
+          },
+          "event_type": "agent_rest",
+          "message": "{actor} rests near {target}.",
+          "tags": [
+            "agent",
+            "rest",
+            "safety"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect campfire",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} checks {target}. It is the social center of the camp.",
+          "tags": [
+            "inspect",
+            "camp",
+            "safety"
+          ]
+        }
+      },
+      "tags": [
+        "camp",
+        "safety",
+        "fire"
+      ]
+    },
+    "food_crate": {
+      "name": "Food Crate",
+      "kind": "food_crate",
+      "aliases": [
+        "food",
+        "crate",
+        "supplies",
+        "ration box"
+      ],
+      "object_type": "container",
+      "sprite": "objects/food_crate.png",
+      "interactions": {
+        "take_food": {
+          "label": "Take ration",
+          "primitive": "take",
+          "affordance_tags": [
+            "food",
+            "hunger",
+            "scarcity",
+            "shared_resource"
+          ],
+          "requires_state_min": {
+            "food": 1
+          },
+          "blocked_message": "{target} is empty. That will not make the camp calmer.",
+          "state_delta": {
+            "food": -1
+          },
+          "grants_item": "ration",
+          "trigger_moment": "food_taken",
+          "event_type_player": "player_take_food",
+          "event_type_agent": "agent_eat",
+          "message": "{actor} takes one ration from {target}. Food left: {state_food}.",
+          "tags": [
+            "food",
+            "social_risk"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect supplies",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} counts the supplies in {target}. Food left: {state_food}.",
+          "tags": [
+            "inspect",
+            "food",
+            "supplies"
+          ]
+        }
+      },
+      "tags": [
+        "food",
+        "supplies"
+      ]
+    },
+    "shelter": {
+      "name": "Palm Shelter",
+      "kind": "shelter",
+      "aliases": [
+        "shelter",
+        "hut",
+        "palm shelter"
+      ],
+      "object_type": "fixture",
+      "sprite": "objects/shelter.png",
+      "interactions": {
+        "rest": {
+          "label": "Rest under shelter",
+          "primitive": "rest",
+          "affordance_tags": [
+            "recover",
+            "fatigue",
+            "stress",
+            "safety"
+          ],
+          "actor_need_delta": {
+            "fatigue": -22,
+            "stress": -10
+          },
+          "event_type": "agent_rest",
+          "message": "{actor} rests under {target}.",
+          "tags": [
+            "agent",
+            "rest",
+            "shelter"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect shelter",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} checks {target}. It would not survive a real storm.",
+          "tags": [
+            "inspect",
+            "shelter",
+            "safety"
+          ]
+        }
+      },
+      "tags": [
+        "shelter",
+        "safety",
+        "rest"
+      ]
+    },
+    "water_source": {
+      "name": "Fresh Water Spring",
+      "kind": "water_source",
+      "aliases": [
+        "water",
+        "spring",
+        "fresh water"
+      ],
+      "object_type": "fixture",
+      "sprite": "objects/water_source.png",
+      "interactions": {
+        "drink": {
+          "label": "Drink water",
+          "primitive": "drink",
+          "affordance_tags": [
+            "water",
+            "thirst",
+            "survival"
+          ],
+          "actor_need_delta": {
+            "thirst": -45
+          },
+          "event_type_player": "player_drink",
+          "event_type_agent": "agent_drink",
+          "message": "{actor} drinks from {target}. The water is cold and almost sweet.",
+          "tags": [
+            "water",
+            "survival"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect spring",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} studies {target}; the mud around it keeps old footprints.",
+          "tags": [
+            "inspect",
+            "water",
+            "mystery"
+          ]
+        }
+      },
+      "tags": [
+        "water",
+        "survival"
+      ]
+    },
+    "broken_radio": {
+      "name": "Broken Radio",
+      "kind": "broken_radio",
+      "aliases": [
+        "radio",
+        "broken radio",
+        "receiver"
+      ],
+      "object_type": "fixture",
+      "sprite": "objects/broken_radio.png",
+      "interactions": {
+        "inspect": {
+          "label": "Inspect radio",
+          "primitive": "inspect",
+          "affordance_tags": [
+            "mystery",
+            "signal",
+            "opportunity"
+          ],
+          "set_state": {
+            "inspected": true
+          },
+          "trigger_moment": "radio_inspected",
+          "event_type": "radio_inspected",
+          "message": "{target} is dead, but the battery compartment is warm.",
+          "tags": [
+            "radio",
+            "mystery"
+          ]
+        },
+        "repair": {
+          "label": "Attempt repair",
+          "primitive": "repair",
+          "affordance_tags": [
+            "repair",
+            "tool",
+            "opportunity"
+          ],
+          "state_delta": {
+            "repair_progress": 1
+          },
+          "event_type": "object_repair",
+          "message": "{actor} works on {target}. Repair progress: {state_repair_progress}.",
+          "tags": [
+            "radio",
+            "repair",
+            "tool"
+          ]
+        }
+      },
+      "tags": [
+        "radio",
+        "mystery",
+        "tool"
+      ],
+      "capability_accepts": [
+        "inspect",
+        "repair",
+        "pry"
+      ]
+    },
+    "cave_entrance": {
+      "name": "Cave Entrance",
+      "kind": "cave_entrance",
+      "aliases": [
+        "cave",
+        "cave entrance",
+        "dark entrance"
+      ],
+      "object_type": "location_feature",
+      "sprite": "objects/cave_entrance.png",
+      "interactions": {
+        "inspect": {
+          "label": "Inspect cave",
+          "primitive": "inspect",
+          "affordance_tags": [
+            "mystery",
+            "danger",
+            "curiosity"
+          ],
+          "all_agent_need_delta": {
+            "stress": 8,
+            "curiosity": 10
+          },
+          "trigger_moment": "cave_inspected",
+          "event_type_player": "cave_inspected",
+          "event_type_agent": "agent_inspect_cave",
+          "message": "{actor} peers into {target}. Something inside clicks twice, then goes silent.",
+          "tags": [
+            "cave",
+            "danger",
+            "mystery"
+          ]
+        },
+        "enter": {
+          "label": "Enter cave mouth",
+          "primitive": "enter",
+          "affordance_tags": [
+            "mystery",
+            "danger",
+            "explore"
+          ],
+          "actor_need_delta": {
+            "stress": 12,
+            "curiosity": -10
+          },
+          "event_type": "cave_enter_attempt",
+          "message": "{actor} edges into {target}, then stops before the dark swallows the path.",
+          "tags": [
+            "cave",
+            "danger",
+            "mystery"
+          ]
+        }
+      },
+      "tags": [
+        "cave",
+        "danger",
+        "mystery"
+      ],
+      "capability_accepts": [
+        "inspect",
+        "anchor",
+        "climb",
+        "test",
+        "block"
+      ],
+      "capability_effects": {
+        "anchor": {
+          "event_type": "item_action_anchor",
+          "message": "{actor} anchors {item} at {target}, making the cave approach feel less reckless.",
+          "salience": 9,
+          "tags": [
+            "item",
+            "capability",
+            "anchor",
+            "safety",
+            "cave",
+            "tool"
+          ],
+          "target_state": {
+            "rope_anchored": true,
+            "anchored_by": "{actor_id}",
+            "anchored_item": "{item_id}"
+          },
+          "consume_item": true,
+          "agent_need_delta": {
+            "stress": -14
+          },
+          "agent_social_delta": {
+            "fear": -5
+          },
+          "flash": {
+            "title": "Safety plan",
+            "content": "Rope converted cave fear into a concrete precaution.",
+            "kind": "decision",
+            "intensity": 0.82
+          }
+        }
+      }
+    },
+    "poisonous_berries": {
+      "name": "Poison Berries",
+      "kind": "poisonous_berries",
+      "aliases": [
+        "berries",
+        "berry bush",
+        "blue berries"
+      ],
+      "object_type": "resource",
+      "sprite": "objects/poisonous_berries.png",
+      "interactions": {
+        "pick": {
+          "label": "Pick berries",
+          "primitive": "take",
+          "affordance_tags": [
+            "food",
+            "hunger",
+            "risk",
+            "unknown"
+          ],
+          "requires_state_min": {
+            "berries": 1
+          },
+          "blocked_message": "{target} has already been stripped.",
+          "state_delta": {
+            "berries": -1
+          },
+          "grants_item": "poison_berries",
+          "actor_need_delta": {
+            "hunger": -20,
+            "stress": 8
+          },
+          "event_type_player": "player_take_berries",
+          "event_type_agent": "agent_risky_food",
+          "message": "{actor} picks suspicious berries from {target}. Berries left: {state_berries}.",
+          "tags": [
+            "item",
+            "food",
+            "toxic",
+            "social_risk"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect berries",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} inspects {target}. The colour looks a little too bright.",
+          "tags": [
+            "inspect",
+            "food",
+            "toxic",
+            "unknown"
+          ]
+        }
+      },
+      "tags": [
+        "food",
+        "toxic",
+        "unknown",
+        "plant"
+      ],
+      "capability_accepts": [
+        "inspect",
+        "test",
+        "cut",
+        "consume"
+      ],
+      "capability_effects": {
+        "test": {
+          "event_type": "item_action_test",
+          "message": "{actor} tests {target} with {item}. The result looks poisonous enough to avoid.",
+          "salience": 8,
+          "tags": [
+            "item",
+            "capability",
+            "test",
+            "toxic",
+            "evidence",
+            "food"
+          ],
+          "target_state": {
+            "tested_poisonous": true
+          },
+          "claim": {
+            "speaker_id": "test",
+            "listener_id": "group",
+            "text": "The berries show signs of toxicity when tested.",
+            "truth_status": "verified",
+            "confidence": 0.9,
+            "object": "poisonous_berries",
+            "claim_type": "evidence",
+            "target_object_id": "{target_id}"
+          }
+        }
+      }
+    },
+    "knife": {
+      "name": "Camp Knife",
+      "kind": "knife",
+      "aliases": [
+        "knife",
+        "camp knife",
+        "blade"
+      ],
+      "object_type": "item",
+      "sprite": "objects/knife.png",
+      "interactions": {
+        "take": {
+          "label": "Take knife",
+          "primitive": "take",
+          "affordance_tags": [
+            "tool",
+            "weapon",
+            "opportunity"
+          ],
+          "blocked_if_state": {
+            "taken": true
+          },
+          "blocked_message": "{target} is already gone.",
+          "set_state": {
+            "taken": true
+          },
+          "grants_item": "{state_item_id}",
+          "event_type_player": "player_take_item",
+          "event_type_agent": "agent_take_item",
+          "message": "{actor} picks up {target}.",
+          "tags": [
+            "item",
+            "inventory",
+            "tool"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect knife",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} inspects {target}. It is small, sharp, and socially loud.",
+          "tags": [
+            "inspect",
+            "tool",
+            "weapon"
+          ]
+        }
+      },
+      "tags": [
+        "tool",
+        "sharp",
+        "weapon"
+      ]
+    },
+    "rope": {
+      "name": "Salt-Stiff Rope",
+      "kind": "rope",
+      "aliases": [
+        "rope",
+        "salt rope",
+        "line"
+      ],
+      "object_type": "item",
+      "sprite": "objects/rope.png",
+      "interactions": {
+        "take": {
+          "label": "Take rope",
+          "primitive": "take",
+          "affordance_tags": [
+            "tool",
+            "safety",
+            "climb",
+            "opportunity"
+          ],
+          "blocked_if_state": {
+            "taken": true
+          },
+          "blocked_message": "{target} is already gone.",
+          "set_state": {
+            "taken": true
+          },
+          "grants_item": "{state_item_id}",
+          "event_type_player": "player_take_item",
+          "event_type_agent": "agent_take_item",
+          "message": "{actor} picks up {target}.",
+          "tags": [
+            "item",
+            "inventory",
+            "tool",
+            "safety"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect rope",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} checks {target}. It could anchor a risky climb.",
+          "tags": [
+            "inspect",
+            "tool",
+            "safety"
+          ]
+        }
+      },
+      "tags": [
+        "tool",
+        "rope",
+        "safety"
+      ]
+    },
+    "medkit": {
+      "name": "Field Medkit",
+      "kind": "medkit",
+      "aliases": [
+        "medkit",
+        "medicine",
+        "medical kit"
+      ],
+      "object_type": "item",
+      "sprite": "objects/medkit.png",
+      "interactions": {
+        "take": {
+          "label": "Take medkit",
+          "primitive": "take",
+          "affordance_tags": [
+            "medical",
+            "healing",
+            "opportunity"
+          ],
+          "blocked_if_state": {
+            "taken": true
+          },
+          "blocked_message": "{target} is already gone.",
+          "set_state": {
+            "taken": true
+          },
+          "grants_item": "{state_item_id}",
+          "event_type_player": "player_take_item",
+          "event_type_agent": "agent_take_item",
+          "message": "{actor} picks up {target}.",
+          "tags": [
+            "item",
+            "inventory",
+            "medical"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect medkit",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} inspects {target}. There is enough for one serious mistake.",
+          "tags": [
+            "inspect",
+            "medical",
+            "tool"
+          ]
+        }
+      },
+      "tags": [
+        "medical",
+        "tool",
+        "healing"
+      ]
+    },
+    "journal_page": {
+      "name": "Torn Journal Page",
+      "kind": "journal_page",
+      "aliases": [
+        "journal",
+        "page",
+        "note"
+      ],
+      "object_type": "item",
+      "sprite": "objects/journal_page.png",
+      "interactions": {
+        "read": {
+          "label": "Read page",
+          "primitive": "inspect",
+          "affordance_tags": [
+            "evidence",
+            "mystery",
+            "cave"
+          ],
+          "claim": {
+            "speaker_id": "journal_page",
+            "listener_id": "group",
+            "text": "A torn journal page says the cave machinery wakes when people gather near it.",
+            "truth_status": "verified",
+            "confidence": 0.85,
+            "object": "cave_entrance",
+            "claim_type": "evidence",
+            "target_object_id": "cave_01"
+          },
+          "flash_best_agent": {
+            "trait": "curiosity",
+            "title": "Evidence",
+            "content": "The journal page suggests the cave reacts to groups, not time.",
+            "kind": "belief",
+            "intensity": 0.82
+          },
+          "event_type": "journal_read",
+          "message": "{actor} reads {target} and surfaces evidence about the cave machinery.",
+          "tags": [
+            "item",
+            "inspect",
+            "evidence",
+            "cave",
+            "mystery"
+          ]
+        },
+        "take": {
+          "label": "Take page",
+          "primitive": "take",
+          "affordance_tags": [
+            "evidence",
+            "mystery"
+          ],
+          "blocked_if_state": {
+            "taken": true
+          },
+          "blocked_message": "{target} is already gone.",
+          "set_state": {
+            "taken": true
+          },
+          "grants_item": "{state_item_id}",
+          "event_type_player": "player_take_item",
+          "event_type_agent": "agent_take_item",
+          "message": "{actor} picks up {target}.",
+          "tags": [
+            "item",
+            "inventory",
+            "evidence",
+            "mystery"
+          ]
+        }
+      },
+      "tags": [
+        "lore",
+        "evidence",
+        "cave",
+        "mystery"
+      ]
+    },
+    "locked_supply_box": {
+      "name": "Locked Supply Box",
+      "kind": "locked_supply_box",
+      "aliases": [
+        "lockbox",
+        "box",
+        "locked box",
+        "supply box"
+      ],
+      "object_type": "container",
+      "sprite": "objects/locked_supply_box.png",
+      "interactions": {
+        "open": {
+          "label": "Pry open box",
+          "primitive": "open",
+          "affordance_tags": [
+            "supplies",
+            "tool",
+            "opportunity"
+          ],
+          "blocked_if_state": {
+            "open": true
+          },
+          "blocked_message": "{target} is open and mostly picked clean.",
+          "requires_inventory_item": {
+            "item_id": "knife",
+            "primitive": "pry",
+            "failure_message": "Locked Supply Box is locked. A sharp tool might pry it open."
+          },
+          "message": "{actor} tries to open {target}.",
+          "tags": [
+            "item",
+            "locked",
+            "supplies"
+          ]
+        },
+        "inspect": {
+          "label": "Inspect box",
+          "primitive": "inspect",
+          "event_type": "object_inspected",
+          "message": "{actor} studies {target}. It was meant to keep supplies under someone's control.",
+          "tags": [
+            "inspect",
+            "locked",
+            "supplies"
+          ]
+        }
+      },
+      "tags": [
+        "supplies",
+        "locked",
+        "tool_required"
+      ],
+      "capability_accepts": [
+        "inspect",
+        "pry",
+        "cut"
+      ],
+      "capability_effects": {
+        "pry": {
+          "requires_closed": true,
+          "event_type": "item_action_pry",
+          "message": "{actor} pries open {target} with {item}. Inside: a ration and rope.",
+          "salience": 8,
+          "tags": [
+            "item",
+            "capability",
+            "pry",
+            "supplies",
+            "tool"
+          ],
+          "target_state": {
+            "open": true
+          },
+          "add_items": [
+            {
+              "actor": "self",
+              "item_id": "ration"
+            },
+            {
+              "actor": "self",
+              "item_id": "rope"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "instances": [
+    {
+      "id": "campfire_01",
+      "template_id": "campfire",
+      "position": [
+        5,
+        3
+      ],
+      "state": {
+        "lit": true
+      }
+    },
+    {
+      "id": "food_crate_01",
+      "template_id": "food_crate",
+      "position": [
+        5,
+        4
+      ],
+      "state": {
+        "food": 4
+      }
+    },
+    {
+      "id": "shelter_01",
+      "template_id": "shelter",
+      "position": [
+        3,
+        5
+      ],
+      "state": {
+        "condition": 65
+      }
+    },
+    {
+      "id": "spring_01",
+      "template_id": "water_source",
+      "position": [
+        8,
+        7
+      ],
+      "state": {
+        "water_amount": 100
+      }
+    },
+    {
+      "id": "radio_01",
+      "template_id": "broken_radio",
+      "position": [
+        11,
+        3
+      ],
+      "state": {
+        "inspected": false,
+        "repair_progress": 0
+      }
+    },
+    {
+      "id": "cave_01",
+      "template_id": "cave_entrance",
+      "position": [
+        9,
+        9
+      ],
+      "state": {
+        "entered": false,
+        "noise_level": 2
+      }
+    },
+    {
+      "id": "berries_01",
+      "template_id": "poisonous_berries",
+      "position": [
+        2,
+        8
+      ],
+      "state": {
+        "berries": 3
+      }
+    },
+    {
+      "id": "knife_01",
+      "template_id": "knife",
+      "position": [
+        6,
+        3
+      ],
+      "state": {
+        "item_id": "knife",
+        "taken": false
+      }
+    },
+    {
+      "id": "rope_01",
+      "template_id": "rope",
+      "position": [
+        7,
+        5
+      ],
+      "state": {
+        "item_id": "rope",
+        "taken": false
+      }
+    },
+    {
+      "id": "medkit_01",
+      "template_id": "medkit",
+      "position": [
+        4,
+        5
+      ],
+      "state": {
+        "item_id": "medkit",
+        "taken": false
+      }
+    },
+    {
+      "id": "journal_01",
+      "template_id": "journal_page",
+      "position": [
+        10,
+        9
+      ],
+      "state": {
+        "item_id": "journal_page",
+        "taken": false
+      }
+    },
+    {
+      "id": "lockbox_01",
+      "template_id": "locked_supply_box",
+      "position": [
+        6,
+        4
+      ],
+      "state": {
+        "open": false
+      }
+    }
+  ]
+}

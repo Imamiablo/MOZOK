@@ -29,6 +29,12 @@ class ArtAssets:
         self.cache[path] = image
         return image
 
+    def image_path(self, relative_path: str) -> Any | None:
+        clean = str(relative_path or "").replace("\\", "/").strip("/")
+        if not clean:
+            return None
+        return self.image(*clean.split("/"))
+
     def first(self, candidates: list[tuple[str, ...]]) -> Any | None:
         for candidate in candidates:
             image = self.image(*candidate)
@@ -52,6 +58,9 @@ class ArtAssets:
                 ("sprites", "objects", f"{kind}.png"),
             ]
         )
+
+    def object_sprite_path(self, sprite: str) -> Any | None:
+        return self.image_path(sprite)
 
     def character_sprite(self, agent_id: str, emotion: str, avatar_folder: str) -> Any | None:
         return self.first(

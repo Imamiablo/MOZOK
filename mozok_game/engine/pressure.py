@@ -23,9 +23,8 @@ TAG_PRESSURE_DELTAS: dict[str, dict[str, float]] = {
     "survival": {"scarcity": 0.018, "danger": 0.012},
     "danger": {"danger": 0.045, "mystery": 0.012},
     "toxic": {"danger": 0.035, "moral_pressure": 0.018},
-    "cave": {"mystery": 0.045, "danger": 0.02},
     "mystery": {"mystery": 0.04, "opportunity": 0.01},
-    "radio": {"mystery": 0.035, "opportunity": 0.015},
+    "signal": {"mystery": 0.035, "opportunity": 0.015},
     "sound": {"mystery": 0.025, "danger": 0.015},
     "conflict": {"instability": 0.05, "authority": 0.02},
     "social_risk": {"instability": 0.035, "moral_pressure": 0.015},
@@ -60,12 +59,19 @@ def default_pressure_field() -> dict[str, float]:
     return {axis: 0.0 for axis in PRESSURE_AXES}
 
 
-def apply_event_pressure(pressure: dict[str, float], event: Any) -> None:
+def apply_event_pressure(
+    pressure: dict[str, float],
+    event: Any,
+    tag_deltas: dict[str, dict[str, float]] | None = None,
+    event_deltas: dict[str, dict[str, float]] | None = None,
+) -> None:
     tags = set(getattr(event, "tags", []) or [])
     deltas: dict[str, float] = {}
+    tag_table = {**TAG_PRESSURE_DELTAS, **dict(tag_deltas or {})}
+    event_table = {**EVENT_PRESSURE_DELTAS, **dict(event_deltas or {})}
     for tag in tags:
-        _merge_deltas(deltas, TAG_PRESSURE_DELTAS.get(str(tag), {}))
-    _merge_deltas(deltas, EVENT_PRESSURE_DELTAS.get(str(getattr(event, "event_type", "")), {}))
+        _merge_deltas(deltas, tag_table.get(str(tag), {}))
+    _merge_deltas(deltas, event_table.get(str(getattr(event, "event_type", "")), {}))
     salience = max(0.25, min(1.5, float(getattr(event, "salience", 5.0)) / 7.0))
     for axis, delta in deltas.items():
         pressure[axis] = _clamp01(pressure.get(axis, 0.0) + delta * salience)

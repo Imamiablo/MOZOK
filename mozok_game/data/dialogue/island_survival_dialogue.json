@@ -1,0 +1,108 @@
+{
+  "pack_id": "island_survival_dialogue",
+  "dialogue_templates": {
+    "dialogue_options": [
+      { "id": "memory", "label": "Ask what they remember" },
+      { "id": "intent", "label": "Ask what they plan" },
+      { "id": "probe", "label": "Press for a theory" },
+      { "id": "reassure", "label": "Reassure them" }
+    ],
+    "dialogue_choices": {
+      "memory": {
+        "reply_template": "{agent}: I keep coming back to this: {memory}",
+        "flash": {
+          "title": "Memory surfaced",
+          "content": "{memory}",
+          "kind": "memory",
+          "intensity": 0.82
+        }
+      },
+      "intent": {
+        "reply_template": "{agent}: My current focus is {focus}. My plan is {plan}.",
+        "flash": {
+          "title": "Conscious broadcast",
+          "content": "{focus}",
+          "kind": "focus",
+          "intensity": 0.65
+        }
+      },
+      "probe": {
+        "reply_template": "{agent}: {theory}",
+        "flash": {
+          "title": "Hypothesis",
+          "content": "{theory}",
+          "kind": "belief",
+          "intensity": 0.7
+        }
+      },
+      "reassure": {
+        "reply_template": "{agent}: Keep saying it plainly. It helps me stay oriented.",
+        "social_delta": { "trust": 5, "fear": -4 },
+        "need_delta": { "stress": -8 },
+        "flash": {
+          "title": "State update",
+          "content": "Player reassurance lowered stress and raised trust.",
+          "kind": "state",
+          "intensity": 0.65
+        }
+      }
+    },
+    "speech_decision_lines": {
+      "follow_accept": ["All right. Lead the way.{claim_hint}", "I will come with you. Keep it clear and I will keep up.{claim_hint}"],
+      "follow_accept_dominant": ["Fine. I will follow, but I am watching the shared resources and your decisions.{claim_hint}"],
+      "follow_accept_careful": ["Okay. I will stay close to you. Please do not make me regret it.{claim_hint}"],
+      "follow_accept_order": ["I will follow. But I heard that as an order, not a conversation.{claim_hint}"],
+      "follow_refuse": ["Not yet. I need a better reason.{claim_hint}"],
+      "follow_refuse_dominant": ["No. Not on trust alone. Tell me why first.{claim_hint}"],
+      "follow_refuse_anxious": ["I cannot. Not while everyone is scattered and I am this scared.{claim_hint}"],
+      "follow_danger_refuse": ["I will not walk into danger on that alone. {claim_hint}"],
+      "go_accept": ["All right. I will go to {object_name}.", "Okay. I will check {object_name}, but I am keeping my head clear."],
+      "go_danger_refuse": ["No. I am not going to {object_name} alone."],
+      "go_low_trust_refuse": ["I do not trust that enough to go to {object_name}."],
+      "player_follow_ack_target": ["Good. Stay close; I am still heading to {object_name}."],
+      "player_follow_ack_together": ["Then we stay together. I am following your lead."],
+      "player_intention_ack": ["Okay. I understand that as your intention, not as proof about the world."],
+      "stop_following": ["Okay. I will stay back."],
+      "keep_distance": ["I was not following you, but I will keep my distance."],
+      "hostile_dominant": ["Try it and this group becomes a courtroom with fists."],
+      "hostile_empathy": ["No. Stop. I will not let this become violence."],
+      "hostile_anxious": ["Back away. I cannot think while you are talking like that."],
+      "hostile_default": ["If this is a test, it is a cruel one. Back off."]
+    },
+    "direct_chat": {
+      "dominance_food": "{name}: I remember the supply count. Shared resources are trust made physical.",
+      "curiosity_mystery": "{name}: Something here keeps forming patterns when we pay attention.",
+      "empathy_danger": "{name}: Stay where I can see you. People get hurt when groups pretend they are fine.",
+      "afraid": "{name}: Please tell me you heard that too. I do not want to be the only one scared.",
+      "angry": "{name}: We need rules before fear makes them for us.",
+      "curious": "{name}: This place is wrong in a way I can almost map.",
+      "tired": "{name}: I can barely stand. Whatever this place wants, it can wait a minute.",
+      "memory": "{name}: I keep thinking about this: {memory}",
+      "default": "{name}: I am still here. That has to count for something."
+    },
+    "theories": {
+      "curiosity": "This place feels designed. Not haunted. Designed.",
+      "dominance": "The first real monster here will be bad accounting.",
+      "empathy": "The pressure is trying to push us apart. That is how people get hurt.",
+      "default": "Something here is arranging pressure on purpose."
+    },
+    "social_lines": {
+      "resource_control": [
+        "Nobody handles shared resources without saying it out loud first.",
+        "We count what keeps us alive before anyone improvises with it."
+      ],
+      "mystery_curiosity": [
+        "If that place keeps changing when we notice it, then noticing is part of the problem.",
+        "I do not think the pattern is in the dark. I think it is in how we react to it."
+      ],
+      "danger_warning": [
+        "Stay close. I am not treating panic in the dark.",
+        "If fear starts making decisions, we slow down and name it first."
+      ],
+      "need_pressure": [
+        "I cannot ignore {urgent} much longer. It is at {value}.",
+        "{listener}, I need to deal with {urgent} before it starts speaking for me."
+      ]
+    }
+  }
+}

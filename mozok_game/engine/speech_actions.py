@@ -14,6 +14,7 @@ class SpeechAct:
     action: str = ""
     target: str = "listener"
     object_kind: str = ""
+    target_object_id: str = ""
     severity: float = 0.0
     confidence: float = 0.0
     force: str = "request"
@@ -26,6 +27,7 @@ class SpeechClaim:
     subject: str = ""
     predicate: str = ""
     object: str = ""
+    target_object_id: str = ""
     claim_type: str = "world_fact"
     confidence: float = 0.0
 
@@ -74,31 +76,7 @@ ACTION_ALIASES = {
 }
 
 
-OBJECT_ALIASES = {
-    "fire": "campfire",
-    "camp": "campfire",
-    "camp_fire": "campfire",
-    "food": "food_crate",
-    "crate": "food_crate",
-    "supplies": "food_crate",
-    "ration": "food_crate",
-    "water": "water_source",
-    "spring": "water_source",
-    "cave": "cave_entrance",
-    "cave entrance": "cave_entrance",
-    "radio": "broken_radio",
-    "shelter": "shelter",
-    "medkit": "medkit",
-    "medicine": "medkit",
-    "knife": "knife",
-    "rope": "rope",
-    "berries": "poisonous_berries",
-    "berry": "poisonous_berries",
-    "journal": "journal_page",
-    "page": "journal_page",
-    "lockbox": "locked_supply_box",
-    "box": "locked_supply_box",
-}
+OBJECT_ALIASES: dict[str, str] = {}
 
 
 def parsed_speech_from_dict(raw_text: str, data: dict[str, Any]) -> ParsedSpeech:
@@ -109,6 +87,7 @@ def parsed_speech_from_dict(raw_text: str, data: dict[str, Any]) -> ParsedSpeech
         kind = _clean_label(item.get("type") or item.get("kind") or "conversation")
         action = _normalise_action(item.get("action") or item.get("requested_action") or item.get("intent") or "")
         object_kind = _normalise_object_kind(item.get("object_kind") or item.get("target_object") or item.get("location") or "")
+        target_object_id = str(item.get("target_object_id") or item.get("object_id") or "").strip()
         if kind in {"threat", "hostile", "intimidation"} and not action:
             action = "hostile"
         acts.append(
@@ -117,6 +96,7 @@ def parsed_speech_from_dict(raw_text: str, data: dict[str, Any]) -> ParsedSpeech
                 action=action,
                 target=str(item.get("target") or "listener"),
                 object_kind=object_kind,
+                target_object_id=target_object_id,
                 severity=_float(item.get("severity"), 0.0),
                 confidence=_float(item.get("confidence"), 0.0),
                 force=_clean_label(item.get("force") or ("order" if kind == "order" else "request")),
@@ -137,6 +117,7 @@ def parsed_speech_from_dict(raw_text: str, data: dict[str, Any]) -> ParsedSpeech
                         subject=str(item.get("subject") or ""),
                         predicate=str(item.get("predicate") or ""),
                         object=str(item.get("object_kind") or item.get("target_object") or item.get("object") or ""),
+                        target_object_id=str(item.get("target_object_id") or item.get("object_id") or ""),
                         claim_type=_clean_label(item.get("claim_type") or item.get("type") or "world_fact"),
                         confidence=_float(item.get("confidence"), 0.65),
                     )
@@ -154,7 +135,7 @@ def parsed_speech_from_dict(raw_text: str, data: dict[str, Any]) -> ParsedSpeech
     )
 
 
-def fallback_interpret_player_speech(text: str) -> ParsedSpeech:
+def fallback_interpret_player_speech(text: str, world: WorldState | None = None) -> ParsedSpeech:
     """Tiny offline fallback for when no semantic LLM parser is available.
 
     The real path is `BrainClient.interpret_speech` in API mode. This fallback
@@ -176,7 +157,7 @@ def fallback_interpret_player_speech(text: str) -> ParsedSpeech:
     elif any(word in lower for word in ("hurt", "kill", "fight", "attack")):
         acts.append(SpeechAct(kind="threat", action="hostile", severity=0.72, confidence=0.58))
     else:
-        for alias, kind in OBJECT_ALIASES.items():
+        for alias, kind in _object_alias_index(world).items():
             if alias in lower and any(verb in lower for verb in ("go", "check", "inspect", "йди", "іди", "піди", "перевір")):
                 acts.append(SpeechAct(kind="request", action="go_to_object", object_kind=kind, confidence=0.58))
                 break
@@ -187,7 +168,7 @@ def record_player_claims(world: WorldState, agent: Agent, parsed: ParsedSpeech) 
     for claim in parsed.claims:
         if not _should_record_claim(claim):
             continue
-        target = _object_for_kind(world, claim.object)
+        target = world.objects.get(claim.target_object_id) if claim.target_object_id else _object_for_kind(world, claim.object)
         world.claim(
             speaker_id="player",
             listener_id=agent.id,
@@ -210,13 +191,13 @@ def decide_agent_response(world: WorldState, agent: Agent, parsed: ParsedSpeech)
     if action == "player_follow_agent" or act.kind == "promise":
         return _player_follow_ack(world, agent)
     if action == "stop_following":
-        return _stop_following(agent)
+        return _stop_following(world, agent)
     if action == "hostile" or act.kind in {"threat", "hostile", "intimidation"}:
-        return _hostile_response(agent, act)
+        return _hostile_response(world, agent, act)
     if action == "follow_player":
         return _follow_response(world, agent, act, parsed)
     if action == "go_to_object":
-        obj = _object_for_kind(world, act.object_kind)
+        obj = _object_for_act(world, act)
         if not obj:
             return AgentDecision(True, False, "refuse", "I do not know where that is.", "unknown target")
         return _go_to_response(world, agent, obj, act)
@@ -253,7 +234,7 @@ def apply_agent_decision(world: WorldState, agent: Agent, parsed: ParsedSpeech, 
     elif decision.action == "go_to_object" and decision.accepted:
         target = world.objects.get(decision.target_object_id)
         constraints = {"return_after": False, "avoid_if_health_below": 35, "avoid_if_stress_above": 92}
-        if target and target.kind == "cave_entrance":
+        if target and {"danger", "mystery"} & set(target.tags) and "anchor" in target.capability_accepts:
             constraints["requires_item_if_stress_above"] = {"item_id": "rope", "stress": 76}
         _start_commitment(
             world,
@@ -365,26 +346,27 @@ def _primary_action(parsed: ParsedSpeech) -> SpeechAct | None:
 
 def _follow_response(world: WorldState, agent: Agent, act: SpeechAct, parsed: ParsedSpeech) -> AgentDecision:
     score = _obedience_score(agent, act)
-    near_cave = bool(world.object_by_kind("cave_entrance") and world.player.position.manhattan(world.object_by_kind("cave_entrance").position) <= 3)
+    near_danger = any({"danger", "mystery"} & set(obj.tags) and world.player.position.manhattan(obj.position) <= 3 for obj in world.objects.values())
     claim_hint = _unverified_claim_hint(parsed)
-    if agent.traits.get("anxiety", 0.0) > 0.65 and near_cave and agent.needs.stress > 55 and score < 72:
-        reply = f"I will not go into the cave on that alone. {claim_hint or 'I need someone else to know where we went.'}"
-        return AgentDecision(True, False, "refuse", reply, "fear of the cave outweighed trust")
+    if agent.traits.get("anxiety", 0.0) > 0.65 and near_danger and agent.needs.stress > 55 and score < 72:
+        reply = _speech_line(world, "follow_danger_refuse", agent, claim_hint=claim_hint or "I need someone else to know where we went.")
+        return AgentDecision(True, False, "refuse", reply, "fear of nearby danger outweighed trust")
     if score >= 48:
-        reply = _accept_follow_line(agent, act.force, claim_hint)
+        reply = _accept_follow_line(world, agent, act.force, claim_hint)
         return AgentDecision(True, True, "follow_player", reply, f"trust/authority score {score:.0f} was enough to follow")
-    reply = _refuse_follow_line(agent, claim_hint)
+    reply = _refuse_follow_line(world, agent, claim_hint)
     return AgentDecision(True, False, "refuse", reply, f"trust/authority score {score:.0f} was too low")
 
 
 def _go_to_response(world: WorldState, agent: Agent, obj: WorldObject, act: SpeechAct) -> AgentDecision:
-    danger = obj.kind == "cave_entrance"
+    tags = set(obj.tags)
+    danger = bool({"danger", "mystery"} & tags)
     score = _obedience_score(agent, act)
     if danger and agent.needs.stress + agent.social_to_player.fear > 92 and score < 76:
-        return AgentDecision(True, False, "refuse", f"No. I am not going to {obj.name} alone.", "danger and fear outweighed the request", obj.id)
-    if score >= 42 or obj.kind in {"water_source", "campfire", "shelter"}:
-        return AgentDecision(True, True, "go_to_object", f"All right. I will go to {obj.name}.", f"accepted destination request for {obj.name}", obj.id)
-    return AgentDecision(True, False, "refuse", f"I do not trust that enough to go to {obj.name}.", "low trust made the destination request fail", obj.id)
+        return AgentDecision(True, False, "refuse", _speech_line(world, "go_danger_refuse", agent, object_name=obj.name), "danger and fear outweighed the request", obj.id)
+    if score >= 42 or {"water", "safety", "shelter", "rest"} & tags:
+        return AgentDecision(True, True, "go_to_object", _speech_line(world, "go_accept", agent, object_name=obj.name), f"accepted destination request for {obj.name}", obj.id)
+    return AgentDecision(True, False, "refuse", _speech_line(world, "go_low_trust_refuse", agent, object_name=obj.name), "low trust made the destination request fail", obj.id)
 
 
 def _player_follow_ack(world: WorldState, agent: Agent) -> AgentDecision:
@@ -392,30 +374,30 @@ def _player_follow_ack(world: WorldState, agent: Agent) -> AgentDecision:
     if active_target_id:
         target = world.objects.get(active_target_id)
         name = target.name if target else "the place I agreed to check"
-        return AgentDecision(True, True, "acknowledge_player_commitment", f"Good. Stay close; I am still heading to {name}.", f"player committed to follow while agent keeps task {name}")
+        return AgentDecision(True, True, "acknowledge_player_commitment", _speech_line(world, "player_follow_ack_target", agent, object_name=name), f"player committed to follow while agent keeps task {name}")
     if agent.following_player or (agent.active_commitment and agent.active_commitment.type == "follow"):
-        return AgentDecision(True, True, "acknowledge_player_commitment", "Then we stay together. I am following your lead.", "player affirmed a shared movement plan")
-    return AgentDecision(True, True, "acknowledge_player_commitment", "Okay. I understand that as your intention, not as proof about the island.", "player stated an intention rather than an external fact")
+        return AgentDecision(True, True, "acknowledge_player_commitment", _speech_line(world, "player_follow_ack_together", agent), "player affirmed a shared movement plan")
+    return AgentDecision(True, True, "acknowledge_player_commitment", _speech_line(world, "player_intention_ack", agent), "player stated an intention rather than an external fact")
 
 
-def _stop_following(agent: Agent) -> AgentDecision:
+def _stop_following(world: WorldState, agent: Agent) -> AgentDecision:
     if agent.following_player:
-        return AgentDecision(True, True, "stop_following", "Okay. I will stay back.", "player ended follow commitment")
-    return AgentDecision(True, True, "stop_following", "I was not following you, but I will keep my distance.", "player requested distance")
+        return AgentDecision(True, True, "stop_following", _speech_line(world, "stop_following", agent), "player ended follow commitment")
+    return AgentDecision(True, True, "stop_following", _speech_line(world, "keep_distance", agent), "player requested distance")
 
 
-def _hostile_response(agent: Agent, act: SpeechAct) -> AgentDecision:
+def _hostile_response(world: WorldState, agent: Agent, act: SpeechAct) -> AgentDecision:
     dominance = agent.traits.get("dominance", 0.4)
     empathy = agent.traits.get("empathy", 0.45)
     anxiety = agent.traits.get("anxiety", 0.45)
     if dominance > 0.65:
-        reply = "Try it and this camp becomes a courtroom with fists."
+        reply = _speech_line(world, "hostile_dominant", agent)
     elif empathy > 0.65:
-        reply = "No. Stop. I will not let this become violence."
+        reply = _speech_line(world, "hostile_empathy", agent)
     elif anxiety > 0.65:
-        reply = "Back away. I cannot think while you are talking like that."
+        reply = _speech_line(world, "hostile_anxious", agent)
     else:
-        reply = "If this is a test, it is a cruel one. Back off."
+        reply = _speech_line(world, "hostile_default", agent)
     severity = max(0.35, act.severity)
     return AgentDecision(True, False, "hostile_alarm", reply, f"semantic parser read a threat/intimidation with severity {severity:.2f}")
 
@@ -439,11 +421,19 @@ def _obedience_score(agent: Agent, act: SpeechAct) -> float:
 
 
 def _object_for_kind(world: WorldState, kind: str) -> WorldObject | None:
-    kind = _normalise_object_kind(kind)
+    kind = _normalise_object_kind(kind, world)
+    query = kind.replace("_", " ")
     for obj in world.objects.values():
-        if obj.kind == kind:
+        labels = _object_labels(obj)
+        if obj.kind == kind or query in labels:
             return obj
     return None
+
+
+def _object_for_act(world: WorldState, act: SpeechAct) -> WorldObject | None:
+    if act.target_object_id and act.target_object_id in world.objects:
+        return world.objects[act.target_object_id]
+    return _object_for_kind(world, act.object_kind)
 
 
 def _should_record_claim(claim: SpeechClaim) -> bool:
@@ -459,9 +449,33 @@ def _normalise_action(value: Any) -> str:
     return ACTION_ALIASES.get(label, label)
 
 
-def _normalise_object_kind(value: Any) -> str:
+def _normalise_object_kind(value: Any, world: WorldState | None = None) -> str:
     label = _clean_label(value)
-    return OBJECT_ALIASES.get(label, label)
+    return _object_alias_index(world).get(label, label)
+
+
+def _object_alias_index(world: WorldState | None = None) -> dict[str, str]:
+    aliases = dict(OBJECT_ALIASES)
+    if not world:
+        return aliases
+    for obj in world.objects.values():
+        for label in _object_labels(obj):
+            aliases[label] = obj.kind
+            aliases[label.replace(" ", "_")] = obj.kind
+    return aliases
+
+
+def _object_labels(obj: WorldObject) -> set[str]:
+    labels = {
+        obj.id.lower().replace("_", " "),
+        obj.kind.lower().replace("_", " "),
+        obj.name.lower(),
+        *(tag.lower().replace("_", " ") for tag in obj.tags),
+        *(alias.lower().replace("_", " ") for alias in obj.aliases),
+    }
+    for chunk in (obj.id, obj.kind, obj.name, *obj.aliases):
+        labels.update(part for part in str(chunk).lower().replace("_", " ").split() if len(part) > 2)
+    return {label for label in labels if label}
 
 
 def _clean_label(value: Any) -> str:
@@ -476,24 +490,63 @@ def _unverified_claim_hint(parsed: ParsedSpeech) -> str:
     return f"I only know that you said: {claim}"
 
 
-def _accept_follow_line(agent: Agent, force: str, claim_hint: str) -> str:
+def _accept_follow_line(world: WorldState, agent: Agent, force: str, claim_hint: str) -> str:
     caveat = f" {claim_hint}" if claim_hint else ""
     if agent.traits.get("dominance", 0.0) > 0.65:
-        return f"Fine. I will follow, but I am watching the supplies and your decisions.{caveat}"
+        return _speech_line(world, "follow_accept_dominant", agent, claim_hint=caveat)
     if agent.traits.get("empathy", 0.0) > 0.65 or agent.traits.get("anxiety", 0.0) > 0.65:
-        return f"Okay. I will stay close to you. Please do not make me regret it.{caveat}"
+        return _speech_line(world, "follow_accept_careful", agent, claim_hint=caveat)
     if force == "order":
-        return f"I will follow. But I heard that as an order, not a conversation.{caveat}"
-    return f"All right. Lead the way.{caveat}"
+        return _speech_line(world, "follow_accept_order", agent, claim_hint=caveat)
+    return _speech_line(world, "follow_accept", agent, claim_hint=caveat)
 
 
-def _refuse_follow_line(agent: Agent, claim_hint: str) -> str:
+def _refuse_follow_line(world: WorldState, agent: Agent, claim_hint: str) -> str:
     caveat = f" {claim_hint}" if claim_hint else ""
     if agent.traits.get("dominance", 0.0) > 0.65:
-        return f"No. Not on trust alone. Tell me why first.{caveat}"
+        return _speech_line(world, "follow_refuse_dominant", agent, claim_hint=caveat)
     if agent.traits.get("anxiety", 0.0) > 0.65:
-        return f"I cannot. Not while everyone is scattered and I am this scared.{caveat}"
-    return f"Not yet. I need a better reason.{caveat}"
+        return _speech_line(world, "follow_refuse_anxious", agent, claim_hint=caveat)
+    return _speech_line(world, "follow_refuse", agent, claim_hint=caveat)
+
+
+def _speech_line(world: WorldState, key: str, agent: Agent, **context: str) -> str:
+    templates = world.dialogue_templates.get("speech_decision_lines") if isinstance(world.dialogue_templates.get("speech_decision_lines"), dict) else {}
+    raw = templates.get(key) if isinstance(templates, dict) else None
+    fallback = _speech_fallbacks().get(key, "{agent}: I hear you.")
+    if isinstance(raw, list) and raw:
+        template = str(raw[(world.turn + len(agent.id)) % len(raw)])
+    else:
+        template = str(raw or fallback)
+    values = {"agent": agent.name, "claim_hint": "", "object_name": "there", **context}
+    for name, value in values.items():
+        template = template.replace("{" + name + "}", str(value))
+    return template.removeprefix(f"{agent.name}: ").strip()
+
+
+def _speech_fallbacks() -> dict[str, str]:
+    return {
+        "follow_danger_refuse": "I will not walk into danger on that alone. {claim_hint}",
+        "go_danger_refuse": "No. I am not going to {object_name} alone.",
+        "go_accept": "All right. I will go to {object_name}.",
+        "go_low_trust_refuse": "I do not trust that enough to go to {object_name}.",
+        "player_follow_ack_target": "Good. Stay close; I am still heading to {object_name}.",
+        "player_follow_ack_together": "Then we stay together. I am following your lead.",
+        "player_intention_ack": "Okay. I understand that as your intention, not as proof about the world.",
+        "stop_following": "Okay. I will stay back.",
+        "keep_distance": "I was not following you, but I will keep my distance.",
+        "hostile_dominant": "Try it and this group becomes a courtroom with fists.",
+        "hostile_empathy": "No. Stop. I will not let this become violence.",
+        "hostile_anxious": "Back away. I cannot think while you are talking like that.",
+        "hostile_default": "If this is a test, it is a cruel one. Back off.",
+        "follow_accept_dominant": "Fine. I will follow, but I am watching the shared resources and your decisions.{claim_hint}",
+        "follow_accept_careful": "Okay. I will stay close to you. Please do not make me regret it.{claim_hint}",
+        "follow_accept_order": "I will follow. But I heard that as an order, not a conversation.{claim_hint}",
+        "follow_accept": "All right. Lead the way.{claim_hint}",
+        "follow_refuse_dominant": "No. Not on trust alone. Tell me why first.{claim_hint}",
+        "follow_refuse_anxious": "I cannot. Not while everyone is scattered and I am this scared.{claim_hint}",
+        "follow_refuse": "Not yet. I need a better reason.{claim_hint}",
+    }
 
 
 def _focus_for_decision(decision: AgentDecision) -> str:

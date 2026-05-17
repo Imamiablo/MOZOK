@@ -361,7 +361,7 @@ class MemoryMaintenanceSuggestionService:
         llm_client = self.llm_client
         if llm_client is None:
             try:
-                llm_client = OllamaOpenAIClient()
+                llm_client = OllamaOpenAIClient(default_role="maintenance")
             except Exception as exc:  # noqa: BLE001 - preview must remain safe.
                 suggestion.metadata["llm_reason_error"] = f"{type(exc).__name__}: {exc}"
                 suggestion.metadata["reason_method"] = "deterministic"

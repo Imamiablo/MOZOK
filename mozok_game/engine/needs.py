@@ -24,12 +24,12 @@ def update_emotion(agent: Agent) -> None:
     agent.emotion_intensity = max(0.1, min(1.0, intensity))
 
 
-def apply_environment_needs(agent: Agent, near_campfire: bool = False, near_cave: bool = False) -> None:
+def apply_environment_needs(agent: Agent, near_safety: bool = False, near_danger: bool = False) -> None:
     agent.needs.tick()
-    if near_campfire:
+    if near_safety:
         agent.needs.stress -= 2.0
         agent.needs.fatigue -= 1.0
-    if near_cave:
+    if near_danger:
         agent.needs.stress += 3.0
         agent.needs.curiosity += 2.0
     if "wounded" in agent.status_flags:

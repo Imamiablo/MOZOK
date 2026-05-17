@@ -16,6 +16,8 @@ class AgentRuntimeTickRequest(BaseModel):
     world_id: str = "default"
     session_id: str = "runtime_tick"
     agent_mode: str | None = None
+    llm_model: str | None = Field(default=None, description="Reserved model override for future LLM-backed runtime tick steps.")
+    llm_model_role: str | None = Field(default=None, description="Reserved model role hint such as fast or reasoning.")
     message: str = Field(default="", description="Optional current stimulus/task. Empty tick still processes events/goals.")
     pull_world_events: bool = True
     world_event_limit: int = Field(default=10, ge=0, le=100)

@@ -1,0 +1,23 @@
+{
+  "role_models": {
+    "chat": "huihui_ai/Qwen3.6-abliterated:35b",
+    "scene": "huihui_ai/Qwen3.6-abliterated:35b",
+    "semantic": "qwen2.5:7b-instruct",
+    "fast": "qwen2.5:7b-instruct",
+    "reasoning": "huihui_ai/Qwen3.6-abliterated:35b",
+    "summarizer": "qwen2.5:7b-instruct",
+    "maintenance": "qwen2.5:7b-instruct"
+  },
+  "available_models": [
+    "fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:latest",
+    "huihui_ai/Qwen3.6-abliterated:35b",
+    "qwen3.6:35b",
+    "qwen2.5-coder:14b-base-q5_K_M",
+    "qwen2.5-coder:14b",
+    "gemma4:26b",
+    "qwen3-coder:30b",
+    "qwen2.5-coder:32b",
+    "llava:7b",
+    "qwen2.5:7b-instruct"
+  ]
+}

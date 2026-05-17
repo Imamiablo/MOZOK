@@ -1,3 +1,139 @@
 {
-  "note": "Canonical map data is embedded in data/scenarios/island_camp_demo.json for the prototype."
+  "map_id": "island_camp_01",
+  "title": "Island Camp Grid",
+  "note": "This map is a reusable pack loaded through scenario.map_ref.",
+  "legend": {
+    ".": { "kind": "grass", "walkable": true },
+    ",": { "kind": "sand", "walkable": true },
+    "T": { "kind": "forest", "walkable": true },
+    "~": { "kind": "water", "walkable": false },
+    "#": { "kind": "rock", "walkable": false },
+    "C": { "kind": "camp", "walkable": true },
+    "F": { "kind": "camp", "walkable": true },
+    "S": { "kind": "camp", "walkable": true },
+    "V": { "kind": "cave", "walkable": true },
+    "R": { "kind": "ruins", "walkable": true },
+    "W": { "kind": "water", "walkable": false },
+    "@": { "kind": "grass", "walkable": true }
+  },
+  "tile_defs": {
+    "sand": {
+      "label": "shore sand",
+      "walkable": true,
+      "tags": [
+        "outdoor",
+        "shore"
+      ],
+      "colour": [
+        174,
+        142,
+        86
+      ]
+    },
+    "grass": {
+      "label": "island grass",
+      "walkable": true,
+      "tags": [
+        "outdoor",
+        "natural"
+      ],
+      "colour": [
+        56,
+        116,
+        66
+      ]
+    },
+    "forest": {
+      "label": "dense palms",
+      "walkable": true,
+      "tags": [
+        "outdoor",
+        "trees"
+      ],
+      "colour": [
+        25,
+        72,
+        43
+      ]
+    },
+    "water": {
+      "label": "dark water",
+      "walkable": false,
+      "tags": [
+        "water",
+        "blocked"
+      ],
+      "colour": [
+        38,
+        83,
+        128
+      ]
+    },
+    "rock": {
+      "label": "black rock",
+      "walkable": false,
+      "tags": [
+        "stone",
+        "blocked"
+      ],
+      "colour": [
+        64,
+        62,
+        66
+      ]
+    },
+    "camp": {
+      "label": "camp ground",
+      "walkable": true,
+      "tags": [
+        "camp",
+        "social"
+      ],
+      "colour": [
+        124,
+        78,
+        43
+      ]
+    },
+    "cave": {
+      "label": "cave stone",
+      "walkable": true,
+      "tags": [
+        "cave",
+        "mystery"
+      ],
+      "colour": [
+        43,
+        38,
+        50
+      ]
+    },
+    "ruins": {
+      "label": "old ruins",
+      "walkable": true,
+      "tags": [
+        "ruins",
+        "mystery"
+      ],
+      "colour": [
+        92,
+        91,
+        87
+      ]
+    }
+  },
+  "rows": [
+    ",,,,,,,,,,,,,,,,",
+    ",....TTTT....~~,",
+    ",..T....T.....~,",
+    ",..T.C..T..R..~,",
+    ",....F.....T..~,",
+    ",..S.....T....,",
+    ",.....@....T..,",
+    ",..T.....W....,",
+    ",..T..T.......",
+    ",.....T..V....",
+    ",,,....###....",
+    ",,,,,,,,,,,,,,,"
+  ]
 }

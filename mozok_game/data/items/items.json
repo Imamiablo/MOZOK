@@ -3,13 +3,38 @@
     "name": "Ration",
     "tags": ["food", "safe", "consumable"],
     "capabilities": ["consume", "give", "trade"],
-    "properties": { "nutrition": 0.65, "danger": 0.0, "size": "small" }
+    "properties": { "nutrition": 0.65, "danger": 0.0, "size": "small" },
+    "inventory_interactions": {
+      "use": {
+        "label": "Eat ration",
+        "primitive": "consume",
+        "affordance_tags": ["food", "hunger", "survival"],
+        "actor_need_delta": { "hunger": -48 },
+        "consume_item": true,
+        "event_type": "agent_eat_inventory",
+        "message": "{actor} eats a ration from their pack.",
+        "tags": ["agent", "food", "item"]
+      }
+    }
   },
   "poison_berries": {
     "name": "Poison Berries",
     "tags": ["food", "toxic", "unknown", "consumable"],
     "capabilities": ["consume", "test", "give", "trade", "threaten"],
-    "properties": { "nutrition": 0.25, "danger": 0.75, "uncertainty": 0.9, "size": "small" }
+    "properties": { "nutrition": 0.25, "danger": 0.75, "uncertainty": 0.9, "size": "small" },
+    "inventory_interactions": {
+      "use": {
+        "label": "Eat suspicious berries",
+        "primitive": "consume",
+        "affordance_tags": ["food", "hunger", "risk", "toxic"],
+        "actor_need_delta": { "hunger": -20, "stress": 10 },
+        "actor_health_delta": -10,
+        "consume_item": true,
+        "event_type": "agent_eat_poison_berries",
+        "message": "{actor} eats suspicious berries and immediately regrets trusting them.",
+        "tags": ["agent", "food", "toxic", "item"]
+      }
+    }
   },
   "knife": {
     "name": "Knife",
@@ -27,7 +52,21 @@
     "name": "Medkit",
     "tags": ["medical", "healing", "tool"],
     "capabilities": ["treat", "inspect", "give", "trade"],
-    "properties": { "healing": 0.72, "charges": 1, "size": "small" }
+    "properties": { "healing": 0.72, "charges": 1, "size": "small" },
+    "inventory_interactions": {
+      "use": {
+        "label": "Treat wound",
+        "primitive": "treat",
+        "affordance_tags": ["medical", "healing", "wound"],
+        "actor_need_delta": { "stress": -12 },
+        "actor_health_delta": 35,
+        "remove_status_flags": ["wounded"],
+        "consume_item": true,
+        "event_type": "agent_treat_wound",
+        "message": "{actor} uses a medkit. Health improves.",
+        "tags": ["agent", "medical", "item"]
+      }
+    }
   },
   "journal_page": {
     "name": "Journal Page",

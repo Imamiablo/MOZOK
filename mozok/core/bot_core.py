@@ -50,6 +50,8 @@ class BotCore:
         message: str,
         session_id: str = "default",
         short_term_limit: int = 20,
+        llm_model: str | None = None,
+        llm_model_role: str | None = None,
         agent_mode: str | None = None,
         apply_agent_mode_defaults: bool = True,
         agent_mode_profile_overrides: dict | None = None,
@@ -242,7 +244,11 @@ class BotCore:
                 )
 
         system_prompt = context.to_system_prompt()
-        response_text = self.llm.chat(system_prompt=system_prompt, user_message=message)
+        resolved_model_role = llm_model_role or "chat"
+        try:
+            response_text = self.llm.chat(system_prompt=system_prompt, user_message=message, model=llm_model, model_role=resolved_model_role)
+        except TypeError:
+            response_text = self.llm.chat(system_prompt=system_prompt, user_message=message)
 
         # Update short-term working memory after the model responds.
         SHORT_TERM_MEMORY.add_message(
@@ -320,6 +326,8 @@ class BotCore:
             agent_id=agent_id,
             session_id=session_id,
             response=response_text,
+            llm_model=getattr(self.llm, "last_model", None),
+            llm_model_role=resolved_model_role,
             agent_mode=context.agent_mode_profile.model_dump() if context.agent_mode_profile else None,
             agent_mode_resolution=context.agent_mode_resolution,
             used_memory_ids=context.used_memory_ids(),

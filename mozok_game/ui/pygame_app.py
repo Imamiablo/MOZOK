@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from mozok_game.engine.director import apply_dialogue_choice, build_dialogue_options
 from mozok_game.engine.interactions import interact_with_object
 from mozok_game.engine.inventory import first_transferable_item, item_name, transfer_item
+from mozok_game.engine.model_settings import MODEL_ROLES, discover_ollama_models, load_game_model_settings, merge_discovered_models, save_game_model_settings
+from mozok_game.engine.object_effects import interaction_spec
+from mozok_game.engine.scene_validation import validate_agent_dialogue
 from mozok_game.engine.speech_actions import apply_agent_decision, decide_agent_response, record_player_claims
 from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import WorldState, load_world
@@ -28,16 +32,20 @@ class PygameApp:
         self.pygame = pygame
         self.base_dir = base_dir
         pygame.init()
-        self.world: WorldState = load_world(base_dir)
-        self.brain = build_brain_client()
+        self.world: WorldState = load_world(base_dir, os.getenv("MOZOK_GAME_SCENARIO_ID", "island_camp_demo"))
+        self.brain = build_brain_client(base_dir)
         self.dialogue_menu: dict | None = None
+        self.object_menu: dict | None = None
         self.text_chat: dict | None = None
         self.agent_dossier: dict | None = None
+        self.model_settings = load_game_model_settings(base_dir)
+        self.model_settings_ui: dict | None = None
+        self.last_auto_chat_event_id: str = ""
         self.world.log("brain_mode", getattr(self.brain, "last_status", "Brain client ready"), source="game", salience=4, tags=["debug", "brain"])
         width = 1280
         height = 720
         self.screen = pygame.display.set_mode((width, height))
-        pygame.display.set_caption("MOZOK: Island Sandbox - First Person Prototype")
+        pygame.display.set_caption(f"MOZOK: {self.world.scenario_title} - First Person Prototype")
         self.clock = pygame.time.Clock()
         self.renderer = Renderer(pygame, self.screen, base_dir)
 
@@ -47,35 +55,48 @@ class PygameApp:
             for event in self.pygame.event.get():
                 if event.type == self.pygame.QUIT:
                     running = False
+                elif event.type == self.pygame.TEXTINPUT and self.model_settings_ui and self.model_settings_ui.get("editing"):
+                    self._handle_model_settings_text(event.text)
                 elif event.type == self.pygame.TEXTINPUT and self.text_chat:
                     self.text_chat["text"] += event.text
                 elif event.type == self.pygame.MOUSEWHEEL and self.text_chat:
                     self._scroll_text_chat(event.y * 3)
                 elif event.type == self.pygame.KEYDOWN:
                     running = self._handle_key(event.key)
-            self.renderer.draw(self.world, self.dialogue_menu, self.text_chat, self.agent_dossier)
+            self.renderer.draw(self.world, self.dialogue_menu, self.text_chat, self.agent_dossier, self.object_menu, self.model_settings_ui)
             self.clock.tick(30)
         self.pygame.quit()
 
     def _handle_key(self, key: int) -> bool:
         pg = self.pygame
+        if self.model_settings_ui:
+            return self._handle_model_settings_key(key)
         if self.text_chat:
             return self._handle_text_chat_key(key)
         if self.agent_dossier:
             return self._handle_dossier_key(key)
+        if self.object_menu:
+            return self._handle_object_menu_key(key)
         if self.dialogue_menu:
             return self._handle_dialogue_key(key)
         if key == pg.K_ESCAPE:
             return False
         if key == pg.K_TAB:
+            self.renderer.cycle_bottom_tab()
+            return True
+        if key == pg.K_F3:
             self.renderer.debug = not self.renderer.debug
+            return True
+        if key in {pg.K_m}:
+            self._open_model_settings()
             return True
         if key in {pg.K_i}:
             self._open_agent_dossier()
             return True
         if key in {pg.K_SPACE}:
-            self.world.log("player_wait", "You wait and listen to the island breathe.", tags=["wait"])
+            self.world.log("player_wait", "You wait and listen.", tags=["wait"])
             run_agent_ticks(self.world, self.brain)
+            self._maybe_open_initiated_chat()
             return True
         if key in {pg.K_e}:
             if self._interact():
@@ -99,10 +120,12 @@ class PygameApp:
         if key in {pg.K_UP, pg.K_w}:
             self._move_relative(1)
             run_agent_ticks(self.world, self.brain)
+            self._maybe_open_initiated_chat()
             return True
         if key in {pg.K_DOWN, pg.K_s}:
             self._move_relative(-1)
             run_agent_ticks(self.world, self.brain)
+            self._maybe_open_initiated_chat()
             return True
         return True
 
@@ -172,6 +195,27 @@ class PygameApp:
         run_agent_ticks(self.world, self.brain)
         return True
 
+    def _handle_object_menu_key(self, key: int) -> bool:
+        pg = self.pygame
+        if key in {pg.K_ESCAPE, pg.K_e}:
+            self.object_menu = None
+            return True
+        keys = [pg.K_1, pg.K_2, pg.K_3, pg.K_4, pg.K_5, pg.K_6, pg.K_7, pg.K_8, pg.K_9]
+        keypad = [pg.K_KP1, pg.K_KP2, pg.K_KP3, pg.K_KP4, pg.K_KP5, pg.K_KP6, pg.K_KP7, pg.K_KP8, pg.K_KP9]
+        if key not in keys and key not in keypad:
+            return True
+        index = (keys.index(key) if key in keys else keypad.index(key))
+        obj = self.world.objects.get(str(self.object_menu.get("object_id", "")))
+        options = list(self.object_menu.get("options", []))
+        if not obj or index >= len(options):
+            return True
+        interaction_id = str(options[index].get("id") or "")
+        self.object_menu = None
+        interact_with_object(self.world, obj, interaction_id)
+        run_agent_ticks(self.world, self.brain)
+        self._maybe_open_initiated_chat()
+        return True
+
     def _handle_text_chat_key(self, key: int) -> bool:
         pg = self.pygame
         if key == pg.K_ESCAPE:
@@ -215,10 +259,28 @@ class PygameApp:
             return False
         front_object = self._object_at(front)
         if front_object:
-            interact_with_object(self.world, front_object)
+            options = self._object_interaction_options(front_object)
+            if len(options) > 1:
+                self.object_menu = {"object_id": front_object.id, "options": options}
+                return False
+            interaction_id = str(options[0]["id"]) if options else ""
+            interact_with_object(self.world, front_object, interaction_id)
             return True
         self.world.log("player_interact_none", "There is nobody and nothing directly in front of you.", tags=["interact"])
         return False
+
+    def _object_interaction_options(self, obj) -> list[dict[str, str]]:
+        options: list[dict[str, str]] = []
+        for interaction_id in obj.interactions:
+            spec = interaction_spec(obj, interaction_id)
+            options.append(
+                {
+                    "id": interaction_id,
+                    "label": str(spec.get("label") or interaction_id.replace("_", " ").title()),
+                    "description": str(spec.get("description") or spec.get("message") or ""),
+                }
+            )
+        return options
 
     def _talk(self) -> bool:
         front_agent = self._agent_at(self._front_position())
@@ -289,6 +351,11 @@ class PygameApp:
             record_player_claims(self.world, agent, parsed)
             decision = decide_agent_response(self.world, agent, parsed)
             if decision.handled:
+                voice = getattr(self.brain, "voice_agent_decision", None)
+                if voice:
+                    voiced = str(voice(self.world, agent, parsed, decision) or "").strip()
+                    if voiced:
+                        decision.reply = voiced
                 apply_agent_decision(self.world, agent, parsed, decision)
                 reply = decision.reply
             else:
@@ -296,6 +363,10 @@ class PygameApp:
             clean = reply.strip()
             if clean.lower().startswith(f"{agent.name.lower()}:"):
                 clean = clean.split(":", 1)[1].strip()
+            validation = validate_agent_dialogue(self.world, agent, clean)
+            if validation.changed:
+                agent.brain_risk = "Grounded dialogue rewrite: " + "; ".join(validation.rejected_physical_claims[:2])
+            clean = validation.text
             agent.last_dialogue = f"{agent.name}: {clean}"
             agent.last_player_contact_turn = self.world.turn
             if decision.action != "hostile_alarm" and not agent.following_player and not agent.command_target_object_id:
@@ -349,12 +420,126 @@ class PygameApp:
             self.world.selected_agent_id = agent.id
             self.world.chat(agent.id, agent.name, f"Take {item_name(item_id)}. Use it carefully.", source="agent", audience_ids=[agent.id])
 
+    def _open_model_settings(self) -> None:
+        self.model_settings = load_game_model_settings(self.base_dir)
+        self.model_settings_ui = {
+            "selected": 0,
+            "editing": False,
+            "draft": dict(self.model_settings.role_models),
+            "available": list(self.model_settings.available_models),
+            "status": "Choose role, Enter edit, Tab cycle, Ctrl+S save, R refresh.",
+        }
+
+    def _handle_model_settings_text(self, text: str) -> None:
+        if not self.model_settings_ui:
+            return
+        role = MODEL_ROLES[int(self.model_settings_ui.get("selected", 0)) % len(MODEL_ROLES)]
+        draft = dict(self.model_settings_ui.get("draft") or {})
+        draft[role] = str(draft.get(role, "")) + text
+        self.model_settings_ui["draft"] = draft
+
+    def _handle_model_settings_key(self, key: int) -> bool:
+        pg = self.pygame
+        if not self.model_settings_ui:
+            return True
+        selected = int(self.model_settings_ui.get("selected", 0))
+        editing = bool(self.model_settings_ui.get("editing"))
+        draft = dict(self.model_settings_ui.get("draft") or {})
+        role = MODEL_ROLES[selected % len(MODEL_ROLES)]
+        if key == pg.K_ESCAPE:
+            if editing:
+                self.model_settings_ui["editing"] = False
+            else:
+                self.model_settings_ui = None
+            return True
+        if editing:
+            if key == pg.K_BACKSPACE:
+                draft[role] = str(draft.get(role, ""))[:-1]
+                self.model_settings_ui["draft"] = draft
+                return True
+            if key == pg.K_RETURN:
+                self.model_settings_ui["editing"] = False
+                return True
+            return True
+        if key in {pg.K_UP, pg.K_w}:
+            self.model_settings_ui["selected"] = (selected - 1) % len(MODEL_ROLES)
+            return True
+        if key in {pg.K_DOWN, pg.K_s}:
+            if key == pg.K_s and self.pygame.key.get_mods() & pg.KMOD_CTRL:
+                self._save_model_settings_ui()
+            else:
+                self.model_settings_ui["selected"] = (selected + 1) % len(MODEL_ROLES)
+            return True
+        if key == pg.K_RETURN:
+            self.model_settings_ui["editing"] = True
+            return True
+        if key == pg.K_TAB:
+            available = list(self.model_settings_ui.get("available") or [])
+            if available:
+                current = str(draft.get(role, ""))
+                index = available.index(current) if current in available else -1
+                draft[role] = available[(index + 1) % len(available)]
+                self.model_settings_ui["draft"] = draft
+            return True
+        if key == pg.K_DELETE:
+            draft.pop(role, None)
+            self.model_settings_ui["draft"] = draft
+            return True
+        if key == pg.K_r:
+            models = discover_ollama_models()
+            available = list(self.model_settings_ui.get("available") or [])
+            merge_discovered_models(self.model_settings, [*available, *models])
+            self.model_settings_ui["available"] = list(self.model_settings.available_models)
+            self.model_settings_ui["status"] = f"Refreshed models: {len(models)} found." if models else "No local Ollama models discovered."
+            return True
+        if key == pg.K_s:
+            self._save_model_settings_ui()
+            return True
+        if key == pg.K_m:
+            self.model_settings_ui = None
+            return True
+        return True
+
+    def _save_model_settings_ui(self) -> None:
+        if not self.model_settings_ui:
+            return
+        draft = {
+            role: str(model).strip()
+            for role, model in dict(self.model_settings_ui.get("draft") or {}).items()
+            if role in MODEL_ROLES and str(model).strip()
+        }
+        self.model_settings.role_models = draft
+        self.model_settings.available_models = list(self.model_settings_ui.get("available") or [])
+        for model in draft.values():
+            merge_discovered_models(self.model_settings, [model])
+        path = save_game_model_settings(self.base_dir, self.model_settings)
+        if hasattr(self.brain, "reload_model_settings"):
+            self.brain.reload_model_settings()
+        self.model_settings_ui["available"] = list(self.model_settings.available_models)
+        self.model_settings_ui["status"] = f"Saved model roles to {path.name}."
+        self.world.log("model_settings_saved", "LLM model role settings saved for the sandbox.", tags=["settings", "llm"])
+
     def _open_dialogue_menu(self, agent) -> None:
         self.world.selected_agent_id = agent.id
         self.dialogue_menu = {
             "agent_id": agent.id,
             "options": build_dialogue_options(self.world, agent),
         }
+
+    def _maybe_open_initiated_chat(self) -> None:
+        if self.text_chat or self.dialogue_menu or self.agent_dossier or self.object_menu:
+            return
+        event = next((item for item in reversed(self.world.event_log[-6:]) if item.event_type == "agent_initiates_chat"), None)
+        if not event or event.event_id == self.last_auto_chat_event_id:
+            return
+        agent_id = str(event.metadata.get("agent_id") or event.source or "")
+        agent = self.world.agents.get(agent_id)
+        if not agent or agent.position.manhattan(self.world.player.position) > 1:
+            return
+        self.last_auto_chat_event_id = event.event_id
+        self._open_direct_chat(agent)
+        if self.text_chat is not None:
+            self.text_chat["initiated"] = True
 
     def _front_position(self):
         from mozok_game.engine.models import Position

@@ -1,0 +1,139 @@
+{
+  "pack_id": "island_survival_moments",
+  "scripted_moments": {
+    "food_taken": {
+      "select_agent": {
+        "prefer_traits": {
+          "dominance": 0.8,
+          "caution": 0.6
+        },
+        "prefer_social": {
+          "resentment": 0.01
+        }
+      },
+      "effects": [
+        {
+          "type": "agent_social_delta",
+          "target": "selected_agent",
+          "delta": {
+            "resentment": 7,
+            "trust": -2
+          }
+        },
+        {
+          "type": "flash",
+          "target": "selected_agent",
+          "once_per_agent": true,
+          "title": "Memory check",
+          "content_template": "The ration count changed, and somebody noticed.",
+          "kind": "memory",
+          "intensity": 0.9
+        },
+        {
+          "type": "log",
+          "once_per_agent": true,
+          "event_type": "storylet_supply_warning",
+          "content_template": "{agent} watches the shared supplies, then checks everyone's hands.",
+          "tags": [
+            "agent",
+            "food",
+            "conflict",
+            "memory"
+          ],
+          "salience": 8
+        }
+      ]
+    },
+    "cave_inspected": {
+      "once": true,
+      "flag": "cave_first_click",
+      "select_agent": {
+        "prefer_traits": {
+          "curiosity": 0.9
+        },
+        "prefer_needs": {
+          "curiosity": 0.01
+        }
+      },
+      "effects": [
+        {
+          "type": "agent_need_delta",
+          "target": "selected_agent",
+          "delta": {
+            "curiosity": 12,
+            "stress": 4
+          }
+        },
+        {
+          "type": "flash",
+          "target": "selected_agent",
+          "title": "Memory resonance",
+          "content_template": "The cave clicked after sunset. Now it answered again.",
+          "kind": "memory",
+          "intensity": 0.95
+        },
+        {
+          "type": "log",
+          "event_type": "storylet_cave_theory",
+          "content_template": "{agent} whispers: It is responding to attention, not time.",
+          "tags": [
+            "agent",
+            "cave",
+            "dialogue",
+            "mystery"
+          ],
+          "salience": 9
+        },
+        {
+          "type": "flash_best_agent",
+          "prefer_traits": {
+            "empathy": 0.7,
+            "caution": 0.6
+          },
+          "title": "Threat model",
+          "content_template": "Unknown cave signal raises group-safety risk.",
+          "kind": "risk",
+          "intensity": 0.82,
+          "need_delta": {
+            "stress": 10
+          }
+        }
+      ]
+    },
+    "radio_inspected": {
+      "once": true,
+      "flag": "radio_first_signal",
+      "effects": [
+        {
+          "type": "log",
+          "event_type": "scripted_radio_signal",
+          "content_template": "The radio exhales static. For half a second, every agent hears their own name.",
+          "source_tags": [
+            "radio"
+          ],
+          "tags": [
+            "radio",
+            "mystery",
+            "sound",
+            "agent"
+          ],
+          "salience": 10
+        },
+        {
+          "type": "all_agent_need_delta",
+          "delta": {
+            "stress": 5,
+            "curiosity": 5
+          }
+        },
+        {
+          "type": "flash_all_agents",
+          "title": "Sensory spike",
+          "content_template": "The radio signal felt personally addressed.",
+          "kind": "perception",
+          "intensity": 0.8
+        }
+      ]
+    }
+  }
+}

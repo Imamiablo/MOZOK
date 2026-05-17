@@ -1,3 +1,4 @@
 {
-  "note": "Canonical object definitions are embedded in data/scenarios/island_camp_demo.json for the prototype."
+  "note": "Object definitions now live in reusable object packs. The island demo uses island_survival_objects.json, where templates define behaviour and instances place them on the map.",
+  "packs": ["island_survival_objects"]
 }

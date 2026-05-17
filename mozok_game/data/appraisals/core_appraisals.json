@@ -1,0 +1,58 @@
+[
+  {
+    "id": "resource_control",
+    "concern": "resource_control",
+    "match_tags": ["food", "scarcity", "scarce"],
+    "match_text": ["ration", "food", "supplies"],
+    "base_score": 30,
+    "min_score": 18,
+    "trait_weights": { "dominance": 18, "caution": 14 },
+    "social_weights": { "low_trust": 18, "resentment": 0.22 },
+    "pressure_weights": { "scarcity": 34 },
+    "value_hooks": { "survival": 12 },
+    "fear_hooks": { "starvation": 12 },
+    "pressure_axes": ["scarcity", "authority"],
+    "suggested_impulses": ["demand", "guard_resource", "demand_resource_rules", "guard_shared_resource"],
+    "reason": "belief touches scarce resources and survival/control values"
+  },
+  {
+    "id": "safety_threat",
+    "concern": "safety_threat",
+    "match_tags": ["danger", "hostile_alarm", "medical"],
+    "match_text": ["danger", "wounded", "injury", "hurt"],
+    "base_score": 26,
+    "min_score": 18,
+    "trait_weights": { "caution": 18, "empathy": 14, "anxiety": 10 },
+    "pressure_weights": { "danger": 36 },
+    "pressure_axes": ["danger", "dependency"],
+    "suggested_impulses": ["warn", "protect", "warn_about_danger", "comfort_stressed_agent"],
+    "reason": "belief suggests physical risk or injury"
+  },
+  {
+    "id": "unresolved_mystery",
+    "concern": "unresolved_mystery",
+    "match_tags": ["mystery"],
+    "match_text": ["mystery", "signal", "unknown", "anomaly", "click"],
+    "base_score": 22,
+    "min_score": 18,
+    "trait_weights": { "curiosity": 28, "caution": -6 },
+    "pressure_weights": { "mystery": 42 },
+    "pressure_axes": ["mystery", "opportunity"],
+    "suggested_impulses": ["investigate", "test_claim", "investigate_mystery"],
+    "reason": "belief contains an unresolved anomaly"
+  },
+  {
+    "id": "social_instability",
+    "concern": "social_instability",
+    "match_tags": ["conflict", "social_risk"],
+    "match_text": ["argument", "threat", "betrayal", "insult"],
+    "base_score": 18,
+    "min_score": 18,
+    "trait_weights": { "empathy": 12 },
+    "social_weights": { "resentment": 0.28 },
+    "pressure_weights": { "instability": 30 },
+    "pressure_axes": ["instability", "authority"],
+    "suggested_impulses": ["comfort", "warn", "challenge_authority", "comfort_stressed_agent"],
+    "reason": "belief points at social pressure"
+  }
+]

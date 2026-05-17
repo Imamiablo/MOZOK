@@ -7,6 +7,7 @@ from mozok_game.engine.capabilities import target_primitives
 from mozok_game.engine.impulses import generate_impulses
 from mozok_game.engine.inventory import choose_item_for_agent_need, item_capabilities, item_name
 from mozok_game.engine.models import Agent, AgentIntent, WorldEvent, WorldObject
+from mozok_game.engine.object_effects import interaction_spec
 from mozok_game.engine.world_state import WorldState
 
 
@@ -27,23 +28,12 @@ NEED_OBJECT_TAGS = {
     "stress": "safety",
 }
 
-CLAIM_OBJECT_HINTS = {
-    "cave": "cave_entrance",
-    "radio": "broken_radio",
-    "water": "water_source",
-    "spring": "water_source",
-    "food": "food_crate",
-    "crate": "food_crate",
-    "fire": "campfire",
-    "camp": "campfire",
-}
-
-
 def build_agent_affordances(world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> list[Affordance]:
     affordances: list[Affordance] = [
         Affordance("wait", "wait and observe", 8.0, {}, "no higher-priority affordance won"),
     ]
     affordances.extend(_need_affordances(world, agent))
+    affordances.extend(_object_interaction_affordances(world, agent))
     affordances.extend(_item_capability_affordances(world, agent))
     affordances.extend(_impulse_affordances(world, agent, recent_events))
     affordances.extend(_claim_affordances(world, agent))
@@ -100,7 +90,7 @@ def _need_affordances(world: WorldState, agent: Agent) -> list[Affordance]:
     if not target:
         return []
     score = 18.0 + value * 0.75
-    if urgent == "stress" and target.kind in {"campfire", "shelter"}:
+    if urgent == "stress" and ({"safety", "shelter", "fire", "rest"} & set(target.tags)):
         score += 8.0
     return [
         Affordance(
@@ -158,6 +148,55 @@ def _inventory_affordances(world: WorldState, agent: Agent) -> list[Affordance]:
                 )
             )
     return result
+
+
+def _object_interaction_affordances(world: WorldState, agent: Agent) -> list[Affordance]:
+    result: list[Affordance] = []
+    urgent, urgent_value = agent.needs.most_urgent
+    for obj in world.objects.values():
+        if not world.is_object_available(obj):
+            continue
+        distance = agent.position.manhattan(obj.position)
+        for interaction_id in obj.interactions:
+            spec = interaction_spec(obj, interaction_id)
+            if not spec:
+                continue
+            score = _score_object_interaction(agent, obj, interaction_id, spec, urgent, urgent_value)
+            if score < 32.0:
+                continue
+            result.append(
+                Affordance(
+                    "move_to_object",
+                    str(spec.get("label") or f"{interaction_id} {obj.name}"),
+                    score - distance * 2.5,
+                    {"object_id": obj.id, "interaction_id": interaction_id},
+                    f"{obj.name}.{interaction_id} matches {urgent} via data affordance tags/effects",
+                )
+            )
+    return result
+
+
+def _score_object_interaction(agent: Agent, obj: WorldObject, interaction_id: str, spec: dict[str, Any], urgent: str, urgent_value: float) -> float:
+    tags = set(obj.tags) | set(spec.get("affordance_tags") or []) | set(spec.get("tags") or [])
+    deltas = dict(spec.get("actor_need_delta") or {})
+    score = 10.0
+    if urgent in deltas and urgent != "curiosity" and float(deltas[urgent]) < 0:
+        score += 18.0 + urgent_value * 0.85 + min(24.0, abs(float(deltas[urgent])) * 0.5)
+    if urgent == "hunger" and {"food", "hunger"} & tags:
+        score += 24.0 + urgent_value * 0.5
+    if urgent == "thirst" and {"water", "thirst"} & tags:
+        score += 26.0 + urgent_value * 0.55
+    if urgent == "fatigue" and {"rest", "recover", "fatigue", "shelter"} & tags:
+        score += 20.0 + urgent_value * 0.55
+    if urgent == "stress" and {"safety", "warmth", "comfort", "stress"} & tags:
+        score += 18.0 + urgent_value * 0.45
+    if urgent == "curiosity" and interaction_id != "take" and {"mystery", "evidence", "unknown"} & tags:
+        score += 15.0 + urgent_value * 0.45 + agent.traits.get("curiosity", 0.0) * 16.0
+    if interaction_id == "take" and ("tool" in tags or "medical" in tags):
+        score += 18.0
+    if "danger" in tags and agent.traits.get("caution", 0.0) > 0.65:
+        score -= agent.needs.stress * 0.28 + agent.social_to_player.fear * 0.2
+    return score
 
 
 def _item_capability_affordances(world: WorldState, agent: Agent) -> list[Affordance]:
@@ -297,53 +336,55 @@ def _social_affordances(world: WorldState, agent: Agent, recent_events: list[Wor
 def _curiosity_affordances(world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> list[Affordance]:
     recent_tags = {tag for event in recent_events for tag in event.tags}
     result: list[Affordance] = []
-    if "cave" in recent_tags or "mystery" in recent_tags:
-        cave = world.object_by_kind("cave_entrance")
-        if cave:
-            danger_penalty = agent.needs.stress * 0.35 + agent.social_to_player.fear * 0.45
+    if _tags_mean_mystery(recent_tags):
+        for obj in world.objects.values():
+            if not ({"mystery", "unknown", "evidence", "signal", "anomaly"} & set(obj.tags)):
+                continue
+            danger_penalty = (agent.needs.stress * 0.35 + agent.social_to_player.fear * 0.45) if "danger" in obj.tags else 0.0
             score = 18.0 + agent.needs.curiosity * 0.65 - danger_penalty
-            if score > 25:
-                result.append(
-                    Affordance(
-                        "move_to_object",
-                        "investigate mystery",
-                        score,
-                        {"object_id": cave.id},
-                        f"curiosity={agent.needs.curiosity:.0f} beat danger penalty {danger_penalty:.0f}",
-                    )
-                )
-    if "radio" in recent_tags or "sound" in recent_tags:
-        radio = world.object_by_kind("broken_radio")
-        if radio:
+            if score <= 25:
+                continue
+            interaction_id = "inspect" if "inspect" in obj.interactions else (obj.interactions[0] if obj.interactions else "")
             result.append(
                 Affordance(
                     "move_to_object",
-                    "inspect strange signal",
-                    22.0 + agent.needs.curiosity * 0.45,
-                    {"object_id": radio.id},
-                    "recent signal event made the radio salient",
+                    "investigate mystery",
+                    score,
+                    {"object_id": obj.id, "interaction_id": interaction_id},
+                    f"curiosity={agent.needs.curiosity:.0f} made {obj.name} salient",
                 )
             )
     return result
 
 
 def _target_for_need(world: WorldState, need: str) -> WorldObject | None:
-    if need == "hunger":
-        crate = world.object_by_kind("food_crate")
-        if crate and int(crate.state.get("food", 0)) > 0:
-            return crate
-        berries = world.object_by_kind("poisonous_berries")
-        if berries and int(berries.state.get("berries", 0)) > 0:
-            return berries
+    candidates: list[tuple[float, WorldObject]] = []
+    dummy = Agent(
+        id="_need_probe",
+        name="_need_probe",
+        role="probe",
+        position=world.player.position.copy(),
+        avatar_folder="",
+        personality="",
+    )
+    setattr(dummy.needs, need, 80.0)
+    for obj in world.objects.values():
+        if not world.is_object_available(obj):
+            continue
+        best = 0.0
+        for interaction_id in obj.interactions:
+            spec = interaction_spec(obj, interaction_id)
+            if spec:
+                best = max(best, _score_object_interaction(dummy, obj, interaction_id, spec, need, 80.0))
+        if best > 35:
+            candidates.append((best, obj))
+    if candidates:
+        return max(candidates, key=lambda item: item[0])[1]
     tag = NEED_OBJECT_TAGS.get(need)
     if tag:
         target = _available_object_with_tag(world, tag)
         if target:
             return target
-    if need == "stress":
-        return world.object_by_kind("campfire") or world.find_object_with_tag("shelter")
-    if need == "fatigue":
-        return world.find_object_with_tag("shelter") or world.object_by_kind("campfire")
     return None
 
 
@@ -351,11 +392,7 @@ def _available_object_with_tag(world: WorldState, tag: str) -> WorldObject | Non
     for obj in world.objects.values():
         if tag not in obj.tags:
             continue
-        if obj.state.get("taken"):
-            continue
-        if obj.kind == "food_crate" and int(obj.state.get("food", 0)) <= 0:
-            continue
-        if obj.kind == "poisonous_berries" and int(obj.state.get("berries", 0)) <= 0:
+        if not world.is_object_available(obj):
             continue
         return obj
     return None
@@ -363,20 +400,42 @@ def _available_object_with_tag(world: WorldState, tag: str) -> WorldObject | Non
 
 def _object_from_claim(world: WorldState, text: str) -> WorldObject | None:
     lower = text.lower()
-    for hint, kind in CLAIM_OBJECT_HINTS.items():
-        if hint in lower:
-            return world.object_by_kind(kind)
+    for obj in world.objects.values():
+        labels = _object_labels(obj)
+        if any(label and label in lower for label in labels):
+            return obj
     return None
 
 
+def _object_labels(obj: WorldObject) -> set[str]:
+    labels = {
+        obj.id.lower().replace("_", " "),
+        obj.kind.lower().replace("_", " "),
+        obj.name.lower(),
+        *(tag.lower().replace("_", " ") for tag in obj.tags),
+        *(alias.lower().replace("_", " ") for alias in obj.aliases),
+    }
+    for chunk in (obj.id, obj.kind, obj.name, *obj.aliases):
+        labels.update(part for part in chunk.lower().replace("_", " ").split() if len(part) > 2)
+    return {label for label in labels if label}
+
+
 def _player_line(agent: Agent, tags: set[str]) -> str:
-    if "cave" in tags and agent.traits.get("curiosity", 0.0) > 0.65:
-        return f"{agent.name}: I need to say this before we move again: the cave is becoming a hypothesis, not just a place."
-    if "food" in tags and (agent.traits.get("dominance", 0.0) > 0.6 or "control" in agent.values):
-        return f"{agent.name}: We need an explicit rule about the crate before hunger writes one for us."
+    if _tags_mean_mystery(tags) and agent.traits.get("curiosity", 0.0) > 0.65:
+        return f"{agent.name}: I need to say this before we move again: this pattern is becoming a hypothesis, not just a place."
+    if _tags_mean_resource_pressure(tags) and (agent.traits.get("dominance", 0.0) > 0.6 or "control" in agent.values):
+        return f"{agent.name}: We need an explicit rule about shared resources before pressure writes one for us."
     if "danger" in tags and (agent.traits.get("empathy", 0.0) > 0.65 or agent.traits.get("caution", 0.0) > 0.65):
         return f"{agent.name}: I need everyone close enough to hear each other. That is not panic; that is medicine."
     return f"{agent.name}: Can we talk for a moment? I do not want silence making the decisions."
+
+
+def _tags_mean_resource_pressure(tags: set[str]) -> bool:
+    return bool(tags & {"food", "supplies", "scarce", "scarcity", "resource", "resources", "shared_resource"})
+
+
+def _tags_mean_mystery(tags: set[str]) -> bool:
+    return bool(tags & {"mystery", "unknown", "evidence", "signal", "sound", "anomaly"})
 
 
 def _apply_deliberation_trace(agent: Agent, affordances: list[Affordance], chosen: Affordance) -> None:

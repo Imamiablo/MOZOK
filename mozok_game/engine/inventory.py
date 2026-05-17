@@ -10,7 +10,28 @@ from mozok_game.engine.world_state import WorldState
 FALLBACK_ITEM_DEFS: dict[str, dict[str, object]] = {}
 
 
-def _load_item_defs() -> dict[str, dict[str, object]]:
+def _item_pack_path(base_dir: Path, ref: str) -> Path:
+    ref_path = Path(ref)
+    if ref_path.suffix:
+        return ref_path if ref_path.is_absolute() else base_dir / "data" / "items" / ref_path
+    return base_dir / "data" / "items" / f"{ref}.json"
+
+
+def _load_item_defs(base_dir: Path | None = None, refs: list[str] | None = None) -> dict[str, dict[str, object]]:
+    base_dir = base_dir or Path(__file__).resolve().parents[1]
+    refs = refs or ["items"]
+    merged: dict[str, dict[str, object]] = {}
+    for ref in refs:
+        path = _item_pack_path(base_dir, ref)
+        if not path.exists():
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            if isinstance(raw.get("items"), dict):
+                raw = raw["items"]
+            merged.update({str(item_id): dict(config) for item_id, config in raw.items() if isinstance(config, dict)})
+    if merged:
+        return merged
     path = Path(__file__).resolve().parents[1] / "data" / "items" / "items.json"
     if not path.exists():
         return dict(FALLBACK_ITEM_DEFS)
@@ -19,6 +40,13 @@ def _load_item_defs() -> dict[str, dict[str, object]]:
 
 
 ITEM_DEFS: dict[str, dict[str, object]] = _load_item_defs()
+
+
+def load_item_definitions(base_dir: Path, refs: list[str] | None = None) -> None:
+    """Load scenario item packs into the small synchronous game runtime."""
+
+    global ITEM_DEFS
+    ITEM_DEFS = _load_item_defs(base_dir, refs)
 
 
 def item_name(item_id: str) -> str:
@@ -35,6 +63,10 @@ def item_capabilities(item_id: str) -> set[str]:
 
 def item_properties(item_id: str) -> dict[str, object]:
     return dict(ITEM_DEFS.get(item_id, {}).get("properties") or {})
+
+
+def item_interactions(item_id: str) -> dict[str, object]:
+    return dict(ITEM_DEFS.get(item_id, {}).get("inventory_interactions") or ITEM_DEFS.get(item_id, {}).get("interactions") or {})
 
 
 def items_with_capability(items: list[str], capability: str) -> list[str]:

@@ -18,6 +18,7 @@ This prototype is intentionally compact:
 - memory flash feed
 - cognitive-field/intent panel
 - data-driven pressure/storylet moments for cave, radio, food, weather, and social stress
+- scenario pack loader for maps, object templates, character refs, dialogue packs, director moments, storylets, drama atoms, and item packs
 - offline fallback brain so the demo works even without MOZOK running
 - optional MOZOK HTTP bridge for later integration
 
@@ -89,7 +90,7 @@ It creates scene textures, object sprites, character billboard sprites, and `pre
 - `S` / Down: step backward
 - `A` / Left: turn left
 - `D` / Right: turn right
-- `E`: interact with the object ahead, or open direct free-text chat with the agent on the tile ahead
+- `E`: interact with the object ahead, choose from its interaction menu, or open direct free-text chat with the agent on the tile ahead
 - `T`: open free-text group chat with all agents on neighbouring tiles
 - `I`: open the selected/front/nearby agent dossier
 - `G`: give the first item in your inventory to the agent directly ahead
@@ -97,8 +98,33 @@ It creates scene textures, object sprites, character billboard sprites, and `pre
 - `Enter`: send the current direct or group chat message
 - Up/Down while chatting: scroll conversation history
 - `Space`: wait / end turn
-- `Tab`: toggle debug overlay
+- `Tab`: switch the bottom panel between Conversation, Inventory, Agent, and Memory
+- `F3`: toggle debug overlay
 - `Esc`: quit
+
+## Scenario Packs
+
+The demo scenario is now a seed file instead of the single place where everything lives. `data/scenarios/island_camp_demo.json` points at reusable packs:
+
+```json
+{
+  "map_ref": "island_camp_01",
+  "object_pack_refs": ["island_survival_objects"],
+  "character_refs": [{ "id": "alice", "overrides": { "position": [5, 5] } }],
+  "item_pack_refs": ["items"],
+  "dialogue_pack_refs": ["island_survival_dialogue"],
+  "director_moment_pack_refs": ["island_survival_moments"],
+  "storylet_pack_refs": ["storylets"],
+  "drama_atom_pack_refs": ["core_atoms"],
+  "pressure_model": {
+    "tag_deltas": {
+      "cave": { "mystery": 0.045, "danger": 0.02 }
+    }
+  }
+}
+```
+
+The old monolithic shape still loads for compatibility, but the editor/generator path should use refs. Maps live in `data/maps`, object templates and placed instances live in `data/objects`, character cards live in `data/agents`, and scenario-specific voice/moment data lives in `data/dialogue` and `data/director_moments`.
 
 ## Agent Speech Actions
 
@@ -134,13 +160,17 @@ The game engine still owns movement and world validation. MOZOK or the offline b
 The sandbox now has the first version of the generic simulation architecture:
 
 - character cards: traits, values, fears, skills, and personality are loaded from scenario data
+- scenario refs: the world can be assembled from map/object/character/dialogue/storylet/drama packs instead of one monolithic JSON
 - data-driven item capability layer: `data/items/items.json` defines tags, capabilities, and properties
 - data-driven target effects: scenario objects can declare `capability_accepts` and `capability_effects`; the capability executor no longer has island-specific branches for cave/lockbox/berries
+- data-driven object interactions: normal world interactions such as `take`, `drink`, `rest`, `inspect`, and `open` now use scenario-declared effects instead of Python branches
 - commitment objects: accepted player requests become active task records with type, target, constraints, expiry, and history; old follow/target fields are now only derived UI/cache fields
 - pressure field: events move axes such as scarcity, danger, mystery, instability, authority, dependency, and exhaustion
 - structured event ledger: world events carry actor, target, item, location, witnesses, visibility, reliability, truth status, and idempotency key
+- perception beliefs: witnessed structured events create simple private AgentBelief records for the agents who perceived them
 - storylet deck: `data/storylets/storylets.json` defines condition-driven events such as cold rain
 - drama atoms and impulses: `data/drama_atoms/core_atoms.json` maps pressures + traits + recent events into candidate actions
+- scene context contract: `engine/scene_context.py` collects hard facts, grounding, beliefs, legal interactions, and candidate impulses for future LLM scene weaving
 - authoritative state export: physical state stays owned by the game and is sent to MOZOK as structured context
 
 ## Items And World Pressure
@@ -172,6 +202,45 @@ Objects can accept capabilities directly in scenario data:
   }
 }
 ```
+
+Objects can also define direct interactions:
+
+```json
+{
+  "template_id": "rough_bed",
+  "name": "Rough Bed",
+  "object_type": "furniture",
+  "sprite": "objects/rough_bed.png",
+  "tags": ["bed", "rest", "shelter", "comfort"],
+  "interactions": {
+    "rest": {
+      "label": "Rest in bed",
+      "primitive": "rest",
+      "affordance_tags": ["recover", "fatigue", "comfort"],
+      "actor_need_delta": { "fatigue": -35, "stress": -15 }
+    }
+  }
+}
+```
+
+An object pack separates reusable templates from placed instances:
+
+```json
+{
+  "templates": {
+    "rough_bed": {
+      "name": "Rough Bed",
+      "kind": "bed",
+      "interactions": { "rest": { "actor_need_delta": { "fatigue": -35 } } }
+    }
+  },
+  "instances": [
+    { "id": "bed_01", "template_id": "rough_bed", "position": [4, 6] }
+  ]
+}
+```
+
+The renderer can keep using a PNG sprite while the simulation meaning lives in JSON. This is the path toward a lightweight editor where a dropped image plus a small semantic description becomes a pickup item, fixture, container, clue, bed, fire, trap, door, or other world object.
 
 ## What to show in a demo
 

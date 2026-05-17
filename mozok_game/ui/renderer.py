@@ -5,31 +5,24 @@ from pathlib import Path
 from typing import Any
 
 from mozok_game.engine.inventory import inventory_label, item_capabilities, item_name
+from mozok_game.engine.model_settings import MODEL_ROLES
 from mozok_game.engine.models import Agent, Position, WorldObject
 from mozok_game.engine.pressure import pressure_summary
 from mozok_game.engine.world_state import WorldState
 from mozok_game.ui.art_assets import ArtAssets
 
 TILE_COLOURS: dict[str, tuple[int, int, int]] = {
-    "sand": (174, 142, 86),
-    "grass": (56, 116, 66),
-    "forest": (25, 72, 43),
+    "floor": (75, 78, 72),
+    "wall": (68, 68, 70),
+    "void": (18, 18, 18),
     "water": (38, 83, 128),
-    "rock": (64, 62, 66),
-    "camp": (124, 78, 43),
-    "cave": (43, 38, 50),
-    "ruins": (92, 91, 87),
 }
 
 TILE_NAMES: dict[str, str] = {
-    "sand": "shore sand",
-    "grass": "island grass",
-    "forest": "dense palms",
+    "floor": "floor",
+    "wall": "wall",
+    "void": "edge",
     "water": "dark water",
-    "rock": "black rock",
-    "camp": "camp ground",
-    "cave": "cave stone",
-    "ruins": "old ruins",
 }
 
 EMOTION_COLOURS: dict[str, tuple[int, int, int]] = {
@@ -43,34 +36,21 @@ EMOTION_COLOURS: dict[str, tuple[int, int, int]] = {
     "suspicious": (72, 150, 110),
 }
 
-OBJECT_MARKERS = {
-    "water_source": "SPRING",
-    "food_crate": "CRATE",
-    "campfire": "FIRE",
-    "cave_entrance": "CAVE",
-    "broken_radio": "RADIO",
-    "shelter": "SHELTER",
-    "poisonous_berries": "BERRIES",
-    "knife": "KNIFE",
-    "rope": "ROPE",
-    "medkit": "MEDKIT",
-    "journal_page": "PAGE",
-    "locked_supply_box": "LOCKBOX",
-}
+OBJECT_MARKERS: dict[str, str] = {}
 
 OBJECT_COLOURS = {
-    "water_source": (72, 159, 212),
-    "food_crate": (166, 105, 52),
-    "campfire": (232, 118, 54),
-    "cave_entrance": (84, 78, 104),
-    "broken_radio": (120, 134, 145),
+    "food": (166, 105, 52),
+    "water": (72, 159, 212),
+    "fire": (232, 118, 54),
     "shelter": (115, 139, 84),
-    "poisonous_berries": (124, 62, 118),
-    "knife": (150, 154, 148),
-    "rope": (158, 117, 68),
-    "medkit": (196, 74, 72),
-    "journal_page": (209, 194, 140),
-    "locked_supply_box": (95, 82, 64),
+    "tool": (150, 154, 148),
+    "medical": (196, 74, 72),
+    "evidence": (209, 194, 140),
+    "rest": (115, 139, 84),
+    "danger": (128, 68, 72),
+    "mystery": (84, 78, 104),
+    "container": (118, 94, 62),
+    "furniture": (124, 104, 78),
 }
 
 FACING_DELTAS = {
@@ -109,9 +89,24 @@ class Renderer:
         self.label = pygame.font.SysFont("georgia", 18, bold=True)
         self.mono = pygame.font.SysFont("consolas", 13)
         self.debug = False
+        self.bottom_tabs = ["conversation", "inventory", "agent", "memory"]
+        self.bottom_tab = "conversation"
         self.avatar_cache: dict[tuple[str, str], Any] = {}
 
-    def draw(self, world: WorldState, dialogue_menu: dict | None = None, text_chat: dict | None = None, agent_dossier: dict | None = None) -> None:
+    def cycle_bottom_tab(self) -> None:
+        index = self.bottom_tabs.index(self.bottom_tab) if self.bottom_tab in self.bottom_tabs else 0
+        self.bottom_tab = self.bottom_tabs[(index + 1) % len(self.bottom_tabs)]
+
+    def draw(
+        self,
+        world: WorldState,
+        dialogue_menu: dict | None = None,
+        text_chat: dict | None = None,
+        agent_dossier: dict | None = None,
+        object_menu: dict | None = None,
+        model_settings_ui: dict | None = None,
+    ) -> None:
+        self._sync_art_pack(world)
         self.screen.fill((10, 9, 7))
         left_rect = self.pygame.Rect(8, 8, 150, 436)
         view_rect = self.pygame.Rect(168, 8, 944, 436)
@@ -132,6 +127,10 @@ class Renderer:
             self._draw_text_chat(world, text_chat)
         if agent_dossier:
             self._draw_agent_dossier(world, agent_dossier)
+        if object_menu:
+            self._draw_object_menu(world, object_menu)
+        if model_settings_ui:
+            self._draw_model_settings(world, model_settings_ui)
         self.pygame.display.flip()
 
     def _draw_first_person_view(self, world: WorldState, rect: Any) -> None:
@@ -145,8 +144,8 @@ class Renderer:
 
     def _draw_scene_backdrop(self, world: WorldState, rect: Any) -> None:
         current = world.player.position
-        tile_kind = world.grid.tile_at(current).kind if world.grid.in_bounds(current) else "grass"
-        ground = TILE_COLOURS.get(tile_kind, TILE_COLOURS["grass"])
+        tile_kind = world.grid.tile_at(current).kind if world.grid.in_bounds(current) else "floor"
+        ground = self._tile_colour(world, tile_kind)
         sky_top = self._mix((17, 30, 38), ground, 0.08)
         sky_low = self._mix((68, 84, 73), ground, 0.18)
         horizon = rect.y + 184
@@ -204,28 +203,29 @@ class Renderer:
                 pos = self._relative_position(world.player.position, world.player_facing, depth, side)
                 if not self._sight_blocked(world, pos):
                     continue
-                tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "rock"
+                tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "wall"
                 if self._side_wall_face_visible(world, depth, side):
-                    self._draw_receding_wall_cell(rect, depth, side, tile_kind)
+                    self._draw_receding_wall_cell(world, rect, depth, side, tile_kind)
         for depth in range(MAX_VIEW_DEPTH, 0, -1):
             for side in VIEW_SIDES:
                 pos = self._relative_position(world.player.position, world.player_facing, depth, side)
                 if not self._sight_blocked(world, pos):
                     continue
-                tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "rock"
+                tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "wall"
                 if self._front_wall_face_visible(world, depth, side):
-                    self._draw_front_wall_face(rect, depth, side, tile_kind)
+                    self._draw_front_wall_face(world, rect, depth, side, tile_kind)
 
     def _draw_floor_cell(self, world: WorldState, rect: Any, depth: int, side: int, pos: Position) -> None:
         points = self._cell_floor_poly(rect, depth, side)
-        tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "grass"
-        base = TILE_COLOURS.get(tile_kind, TILE_COLOURS["grass"])
+        tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "floor"
+        base = self._tile_colour(world, tile_kind)
         shade = self._mix(base, (18, 21, 16), 0.12 + depth * 0.035)
         if side:
             shade = self._mix(shade, (0, 0, 0), min(0.16, abs(side) * 0.06))
         self.pygame.draw.polygon(self.screen, shade, points)
 
-        image = None if tile_kind == "water" else self._scene_image_for_kind(tile_kind, "floor", generic=True)
+        is_water = self._tile_has_tag(world, tile_kind, "water")
+        image = None if is_water else self._scene_image_for_kind(tile_kind, "floor", generic=True)
         if image:
             xs = [point[0] for point in points]
             ys = [point[1] for point in points]
@@ -240,25 +240,26 @@ class Renderer:
 
         edge = self._mix((164, 145, 88), shade, 0.5)
         self.pygame.draw.polygon(self.screen, edge, points, width=1)
-        if tile_kind == "water":
+        if is_water:
             self._draw_water_surface(rect, points, depth, side)
         if side == 0:
             self.pygame.draw.line(self.screen, self._mix(edge, (0, 0, 0), 0.45), points[0], points[3], 1)
             self.pygame.draw.line(self.screen, self._mix(edge, (0, 0, 0), 0.45), points[1], points[2], 1)
-        self._draw_walkable_feature(tile_kind, rect, depth, side)
+        self._draw_walkable_feature(world, tile_kind, rect, depth, side)
 
     def _draw_wall_cell(self, world: WorldState, rect: Any, depth: int, side: int, pos: Position) -> None:
-        tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "rock"
+        tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "wall"
         if side != 0:
-            self._draw_receding_wall_cell(rect, depth, side, tile_kind)
+            self._draw_receding_wall_cell(world, rect, depth, side, tile_kind)
             return
 
         wall = self._wall_rect(rect, depth, side)
         if wall.w <= 2 or wall.h <= 2:
             return
 
-        base = TILE_COLOURS.get(tile_kind, TILE_COLOURS["rock"])
-        wall_img = None if tile_kind == "water" else self._scene_image_for_kind(tile_kind, "wall", generic=True)
+        base = self._tile_colour(world, tile_kind)
+        is_water = self._tile_has_tag(world, tile_kind, "water")
+        wall_img = None if is_water else self._scene_image_for_kind(tile_kind, "wall", generic=True)
         if wall_img:
             self._blit_scaled(wall_img, wall)
         else:
@@ -267,7 +268,7 @@ class Renderer:
             for y in range(wall.h):
                 colour = self._mix(top, bottom, y / max(1, wall.h - 1))
                 self.pygame.draw.line(self.screen, colour, (wall.x, wall.y + y), (wall.right, wall.y + y))
-        if tile_kind == "water":
+        if is_water:
             for i in range(5):
                 yy = wall.y + 18 + i * max(8, wall.h // 7)
                 self.pygame.draw.arc(self.screen, (118, 174, 196), self.pygame.Rect(wall.x + 12, yy, wall.w - 24, 18), 0, math.pi, 1)
@@ -277,9 +278,9 @@ class Renderer:
         self.screen.blit(veil, wall)
         self.pygame.draw.rect(self.screen, self._mix(GOLD_DARK, base, 0.32), wall, width=2)
         if side == 0 or depth <= 2:
-            self._centered(self.pygame.Rect(wall.x, wall.y + 8, wall.w, 24), TILE_NAMES.get(tile_kind, "blocked"), PAPER, self.tiny)
+            self._centered(self.pygame.Rect(wall.x, wall.y + 8, wall.w, 24), self._tile_name_for_kind(world, tile_kind, "blocked"), PAPER, self.tiny)
 
-    def _draw_front_wall_face(self, rect: Any, depth: int, side: int, tile_kind: str) -> None:
+    def _draw_front_wall_face(self, world: WorldState, rect: Any, depth: int, side: int, tile_kind: str) -> None:
         points = self._cell_floor_poly(rect, depth, side)
         left_floor = points[3]
         right_floor = points[2]
@@ -293,7 +294,7 @@ class Renderer:
         if box.w <= 2 or box.h <= 2:
             return
 
-        base = TILE_COLOURS.get(tile_kind, TILE_COLOURS["rock"])
+        base = self._tile_colour(world, tile_kind)
         wall_img = self._scene_image_for_kind(tile_kind, "wall", generic=True)
         old_clip = self.screen.get_clip()
         self.screen.set_clip(rect)
@@ -309,10 +310,10 @@ class Renderer:
         self.pygame.draw.polygon(self.screen, self._mix(GOLD_DARK, base, 0.28), wall_poly, width=2)
         if side == 0:
             label_rect = self.pygame.Rect(box.x, box.y + 8, box.w, 22)
-            self._centered(label_rect, TILE_NAMES.get(tile_kind, "blocked"), PAPER, self.tiny)
+            self._centered(label_rect, self._tile_name_for_kind(world, tile_kind, "blocked"), PAPER, self.tiny)
         self.screen.set_clip(old_clip)
 
-    def _draw_receding_wall_cell(self, rect: Any, depth: int, side: int, tile_kind: str) -> None:
+    def _draw_receding_wall_cell(self, world: WorldState, rect: Any, depth: int, side: int, tile_kind: str) -> None:
         if side == 0:
             return
         points = self._cell_floor_poly(rect, depth, side)
@@ -330,7 +331,7 @@ class Renderer:
         near_top = (near_floor[0], max(rect.y + 18, near_floor[1] - near_h))
         wall_poly = [far_top, near_top, near_floor, far_floor]
 
-        base = TILE_COLOURS.get(tile_kind, TILE_COLOURS["rock"])
+        base = self._tile_colour(world, tile_kind)
         face = self._mix(base, (15, 16, 14), 0.28 + min(0.22, abs(side) * 0.05))
         highlight = self._mix(face, PAPER, 0.16)
         shadow = self._mix(face, (0, 0, 0), 0.34)
@@ -397,8 +398,16 @@ class Renderer:
         self.screen.blit(sheen, box)
         self.pygame.draw.line(self.screen, (154, 206, 215), points[0], points[1], 1)
 
-    def _draw_walkable_feature(self, tile_kind: str, rect: Any, depth: int, side: int) -> None:
-        if tile_kind not in {"forest", "ruins", "cave"} or depth > 4:
+    def _draw_walkable_feature(self, world: WorldState, tile_kind: str, rect: Any, depth: int, side: int) -> None:
+        tile_tags = set(world.grid.tile_defs.get(tile_kind, {}).get("tags") or [])
+        feature_kind = ""
+        if {"trees", "forest", "foliage"} & tile_tags:
+            feature_kind = "trees"
+        elif {"ruins", "architecture"} & tile_tags:
+            feature_kind = "ruins"
+        elif {"cave", "entrance"} & tile_tags:
+            feature_kind = "entrance"
+        if not feature_kind or depth > 4:
             return
         points = self._cell_floor_poly(rect, depth, side)
         center_x = (points[2][0] + points[3][0]) // 2
@@ -411,17 +420,17 @@ class Renderer:
             return
         box = rect.clip(box)
 
-        if tile_kind == "forest":
+        if feature_kind == "trees":
             trunk = self._mix((75, 50, 27), (0, 0, 0), depth * 0.04)
-            leaf = self._mix(TILE_COLOURS["forest"], (0, 0, 0), depth * 0.05)
+            leaf = self._mix(self._tile_colour(world, tile_kind), (0, 0, 0), depth * 0.05)
             for offset in (-0.28, 0.12, 0.36):
                 tx = box.centerx + int(box.w * offset)
                 self.pygame.draw.line(self.screen, trunk, (tx, box.bottom), (tx + int(10 * scale), box.y + int(28 * scale)), max(1, int(5 * scale)))
                 self.pygame.draw.circle(self.screen, leaf, (tx + int(12 * scale), box.y + int(24 * scale)), max(5, int(28 * scale)))
             return
 
-        if tile_kind == "ruins":
-            stone = self._mix(TILE_COLOURS["ruins"], (0, 0, 0), 0.14 + depth * 0.04)
+        if feature_kind == "ruins":
+            stone = self._mix(self._tile_colour(world, tile_kind), (0, 0, 0), 0.14 + depth * 0.04)
             cap = self._mix(PAPER, stone, 0.68)
             for offset in (-0.28, 0.28):
                 col = self.pygame.Rect(box.centerx + int(box.w * offset) - max(4, box.w // 10), box.y + box.h // 4, max(8, box.w // 5), box.h * 3 // 4)
@@ -430,8 +439,9 @@ class Renderer:
             return
 
         arch = self.pygame.Rect(box.x + box.w // 8, box.y + box.h // 5, box.w * 3 // 4, box.h * 4 // 5)
-        self.pygame.draw.rect(self.screen, self._mix(TILE_COLOURS["cave"], (0, 0, 0), 0.22), arch, border_radius=max(3, int(10 * scale)))
-        self.pygame.draw.rect(self.screen, self._mix(PAPER, TILE_COLOURS["cave"], 0.6), arch, width=max(1, int(2 * scale)), border_radius=max(3, int(10 * scale)))
+        cave_colour = self._tile_colour(world, tile_kind)
+        self.pygame.draw.rect(self.screen, self._mix(cave_colour, (0, 0, 0), 0.22), arch, border_radius=max(3, int(10 * scale)))
+        self.pygame.draw.rect(self.screen, self._mix(PAPER, cave_colour, 0.6), arch, width=max(1, int(2 * scale)), border_radius=max(3, int(10 * scale)))
 
     def _cell_floor_poly(self, rect: Any, depth: int, side: int) -> list[tuple[int, int]]:
         top_y, bottom_y, top_lane, bottom_lane = self._depth_band(rect, depth)
@@ -531,17 +541,17 @@ class Renderer:
         h = int(250 * scale)
         y = int(rect.y + 118 + (4 - depth) * 54)
         wall = self.pygame.Rect(cx - w // 2, y, w, h)
-        tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "rock"
+        tile_kind = world.grid.tile_at(pos).kind if world.grid.in_bounds(pos) else "wall"
         wall_img = self.art.scene(tile_kind, "wall") or self.art.scene(tile_kind, "blocker")
         if wall_img:
             self._blit_scaled(wall_img, wall)
         else:
-            colour = self._mix(TILE_COLOURS.get(tile_kind, (70, 70, 70)), (21, 18, 17), 0.38)
+            colour = self._mix(self._tile_colour(world, tile_kind), (21, 18, 17), 0.38)
             self.pygame.draw.rect(self.screen, colour, wall, border_radius=2)
             for x in range(wall.x + 12, wall.right, max(24, int(42 * scale))):
                 self.pygame.draw.line(self.screen, self._mix(colour, (180, 170, 135), 0.22), (x, wall.y + 8), (x - 18, wall.bottom - 10), 1)
         self.pygame.draw.rect(self.screen, (163, 140, 82), wall, width=2)
-        self._centered(self.pygame.Rect(wall.x, wall.y + 12, wall.w, 24), TILE_NAMES.get(tile_kind, "blocked"), PAPER, self.small)
+        self._centered(self.pygame.Rect(wall.x, wall.y + 12, wall.w, 24), self._tile_name_for_kind(world, tile_kind, "blocked"), PAPER, self.small)
 
     def _draw_visible_objects(self, world: WorldState, rect: Any) -> None:
         for depth in range(MAX_VIEW_DEPTH, 0, -1):
@@ -565,16 +575,16 @@ class Renderer:
 
     def _draw_object_billboard(self, rect: Any, obj: WorldObject, depth: int, side: int) -> None:
         box = self._billboard_rect(rect, depth, side, agent=False)
-        sprite = self.art.object_sprite(obj.kind)
+        sprite = self.art.object_sprite_path(obj.sprite) or self.art.object_sprite(obj.kind)
         if sprite:
             self._draw_sprite(sprite, box)
         else:
-            colour = OBJECT_COLOURS.get(obj.kind, (190, 176, 126))
+            colour = self._object_colour(obj)
             shadow = box.move(6, 9)
             self.pygame.draw.ellipse(self.screen, (0, 0, 0), self.pygame.Rect(shadow.x, shadow.bottom - 20, shadow.w, 22))
             self.pygame.draw.rect(self.screen, colour, box, border_radius=6)
             self.pygame.draw.rect(self.screen, self._mix(PAPER, colour, 0.6), box, width=2, border_radius=6)
-            marker = OBJECT_MARKERS.get(obj.kind, obj.name.upper()[:8])
+            marker = str(obj.render.get("label") or OBJECT_MARKERS.get(obj.kind, obj.name.upper()[:8]))
             self._centered(box, marker, (22, 18, 12), self.small if depth > 1 else self.label)
         label = self.pygame.Rect(box.x - 22, box.bottom + 4, box.w + 44, 24)
         self._small_nameplate(label, obj.name[:22])
@@ -647,54 +657,95 @@ class Renderer:
 
     def _draw_bottom_panel(self, world: WorldState, rect: Any) -> None:
         self._ornate_panel(rect, GREEN_PANEL, "Dialogue / Mozok Brain")
-        left = self.pygame.Rect(rect.x + 20, rect.y + 34, 390, rect.h - 54)
-        mid = self.pygame.Rect(rect.x + 426, rect.y + 34, 278, rect.h - 54)
-        right = self.pygame.Rect(rect.x + 720, rect.y + 34, 204, rect.h - 54)
+        self._draw_bottom_tabs(rect)
+        content = self.pygame.Rect(rect.x + 20, rect.y + 62, rect.w - 40, rect.h - 82)
+        if self.bottom_tab == "inventory":
+            self._draw_inventory_tab(world, content)
+        elif self.bottom_tab == "agent":
+            self._draw_agent_focus_tab(world, content)
+        elif self.bottom_tab == "memory":
+            self._draw_memory_tab(world, content)
+        else:
+            self._draw_conversation_tab(world, content)
+        self._line(rect.right - 176, rect.bottom - 24, "Tab switch panel", (238, 214, 161), self.tiny)
 
-        self._line(left.x, left.y, "Conversation", PAPER, self.label)
-        y = left.y + 26
+    def _draw_bottom_tabs(self, rect: Any) -> None:
+        labels = [("conversation", "Conversation"), ("inventory", "Inventory"), ("agent", "Agent"), ("memory", "Memory")]
+        x = rect.x + 188
+        y = rect.y + 12
+        for tab_id, label in labels:
+            tab = self.pygame.Rect(x, y, 116, 25)
+            active = tab_id == self.bottom_tab
+            self.pygame.draw.rect(self.screen, PAPER if active else (37, 52, 43), tab, border_radius=3)
+            self.pygame.draw.rect(self.screen, GOLD_DARK if active else GOLD, tab, width=1, border_radius=3)
+            self._centered(tab, label, INK if active else PAPER, self.tiny)
+            x += 122
+
+    def _draw_conversation_tab(self, world: WorldState, rect: Any) -> None:
+        self._line(rect.x, rect.y, "Conversation", PAPER, self.label)
+        y = rect.y + 28
         chat_lines = world.chat_log[-4:] if world.chat_log else []
         if chat_lines:
             for item in chat_lines:
                 name = f"{item.speaker_name}:"
                 colour = (255, 241, 166) if item.source == "player" else (174, 220, 238)
-                self._line(left.x, y, name[:10], colour, self.small)
-                for line in self._wrap(item.content, 56, 2):
-                    self._line(left.x + 70, y, line, (240, 238, 220), self.small)
+                self._line(rect.x, y, name[:13], colour, self.small)
+                for line in self._wrap(item.content, 100, 2):
+                    self._line(rect.x + 92, y, line, (240, 238, 220), self.small)
                     y += 19
                 y += 3
         else:
             for event in world.event_log[-5:]:
-                self._line(left.x, y, f"[{event.turn:03d}] {event.content}"[:62], (240, 238, 220), self.small)
+                self._line(rect.x, y, f"[{event.turn:03d}] {event.content}"[:112], (240, 238, 220), self.small)
                 y += 22
 
+    def _draw_agent_focus_tab(self, world: WorldState, rect: Any) -> None:
         agent = self._focused_agent(world)
-        self._line(mid.x, mid.y, "Agent Focus", PAPER, self.label)
+        self._line(rect.x, rect.y, "Agent Focus", PAPER, self.label)
         if agent:
-            self._line(mid.x, mid.y + 28, f"{agent.name} goal: {agent.current_goal.replace('_', ' ')}"[:42], (228, 233, 215), self.small)
-            self._line(mid.x, mid.y + 49, f"Plan: {agent.current_plan}"[:42], (238, 214, 161), self.tiny)
+            avatar_rect = self.pygame.Rect(rect.x, rect.y + 34, 118, 138)
+            avatar = self.art.character_sprite(agent.id, agent.emotion, agent.avatar_folder) or self._load_avatar(agent)
+            if avatar:
+                self._draw_sprite(avatar, avatar_rect)
+            self.pygame.draw.rect(self.screen, GOLD, avatar_rect, width=2, border_radius=4)
+            x = rect.x + 140
+            self._line(x, rect.y + 28, f"{agent.name} goal: {agent.current_goal.replace('_', ' ')}"[:82], (228, 233, 215), self.small)
+            self._line(x, rect.y + 49, f"Plan: {agent.current_plan}"[:82], (238, 214, 161), self.tiny)
             target_line = self._agent_target_line(world, agent)
-            y = mid.y + 68
+            y = rect.y + 70
             if target_line:
-                self._line(mid.x, y, target_line[:42], (238, 214, 161), self.tiny)
+                self._line(x, y, target_line[:82], (238, 214, 161), self.tiny)
                 y += 17
-            self._line(mid.x, y, self._compact_state_line(agent), (238, 214, 161), self.tiny)
+            self._line(x, y, self._compact_state_line(agent), (238, 214, 161), self.tiny)
             y += 19
             status = self._agent_commitment_line(agent) or agent.deliberation_summary or agent.brain_broadcast or agent.brain_focus
-            for line in self._wrap(status, 34, 5):
-                self._line(mid.x, y, line, (230, 231, 215), self.small)
+            for line in self._wrap(status, 90, 5):
+                self._line(x, y, line, (230, 231, 215), self.small)
                 y += 19
 
-        self._line(right.x, right.y, "Memory Notes", PAPER, self.label)
-        y = right.y + 28
+    def _draw_memory_tab(self, world: WorldState, rect: Any) -> None:
+        self._line(rect.x, rect.y, "Memory Notes", PAPER, self.label)
+        y = rect.y + 28
         for flash in world.brain_flashes[-4:]:
             name = world.agents.get(flash.agent_id).name if world.agents.get(flash.agent_id) else flash.agent_id
-            self._line(right.x, y, f"{name}: {flash.title}"[:27], (255, 241, 166), self.tiny)
+            self._line(rect.x, y, f"{name}: {flash.title}"[:42], (255, 241, 166), self.small)
             y += 16
-            for line in self._wrap(flash.content, 25, 2):
-                self._line(right.x, y, line, (224, 229, 216), self.tiny)
+            for line in self._wrap(flash.content, 96, 2):
+                self._line(rect.x + 22, y, line, (224, 229, 216), self.small)
                 y += 15
             y += 4
+        if not world.brain_flashes:
+            self._line(rect.x, y, "No memory flashes yet.", (224, 229, 216), self.small)
+
+    def _draw_inventory_tab(self, world: WorldState, rect: Any) -> None:
+        self._line(rect.x, rect.y, "Your Inventory", PAPER, self.label)
+        self._line(rect.x, rect.y + 30, inventory_label(world.player.inventory), (240, 238, 220), self.small)
+        self._line(rect.x + 310, rect.y, "Nearby Objects", PAPER, self.label)
+        y = rect.y + 30
+        for obj in world.nearby_objects(distance=2)[:6]:
+            interactions = ", ".join(obj.interactions[:4]) if obj.interactions else "no direct interaction"
+            self._line(rect.x + 310, y, f"{obj.name}: {interactions}"[:76], (240, 238, 220), self.small)
+            y += 21
 
     def _compact_state_line(self, agent: Agent) -> str:
         return (
@@ -742,43 +793,125 @@ class Renderer:
             y += 62
         self._line(rect.x + 24, rect.bottom - 30, "1-3 choose / T or Esc close", PAPER, self.small)
 
+    def _draw_object_menu(self, world: WorldState, object_menu: dict) -> None:
+        obj = world.objects.get(str(object_menu.get("object_id", "")))
+        if not obj:
+            return
+        self._dark_overlay(116)
+        rect = self.pygame.Rect(300, 128, 680, 390)
+        self._ornate_panel(rect, (43, 58, 48), obj.name)
+        sprite_rect = self.pygame.Rect(rect.x + 24, rect.y + 52, 170, 190)
+        sprite = self.art.object_sprite_path(obj.sprite) or self.art.object_sprite(obj.kind)
+        if sprite:
+            self._draw_sprite(sprite, sprite_rect)
+        else:
+            self.pygame.draw.rect(self.screen, self._object_colour(obj), sprite_rect, border_radius=5)
+        self.pygame.draw.rect(self.screen, GOLD, sprite_rect, width=2, border_radius=5)
+        tags = ", ".join(obj.tags[:6]) or obj.kind
+        self._line(rect.x + 218, rect.y + 54, tags[:58], PAPER, self.small)
+        y = rect.y + 92
+        for index, option in enumerate(object_menu.get("options", [])[:9], start=1):
+            option_rect = self.pygame.Rect(rect.x + 218, y, rect.w - 250, 48)
+            label = str(option.get("label") or option.get("id") or "Interact")
+            self._menu_item(option_rect, f"{index}. {label}")
+            desc = str(option.get("description") or "")
+            if desc:
+                preview = desc.replace("{actor}", "You").replace("{target}", obj.name)
+                self._line(option_rect.x + 14, option_rect.y + 27, preview[:70], (217, 219, 196), self.tiny)
+            y += 60
+        self._line(rect.x + 24, rect.bottom - 28, "1-9 choose / E or Esc close", PAPER, self.small)
+
+    def _draw_model_settings(self, world: WorldState, settings_ui: dict) -> None:
+        self._dark_overlay(148)
+        rect = self.pygame.Rect(250, 78, 780, 560)
+        self._ornate_panel(rect, (43, 70, 57), "LLM Model Roles")
+        selected = int(settings_ui.get("selected", 0)) % len(MODEL_ROLES)
+        editing = bool(settings_ui.get("editing"))
+        draft = dict(settings_ui.get("draft") or {})
+        available = list(settings_ui.get("available") or [])
+        self._line(rect.x + 34, rect.y + 42, f"Scenario: {world.scenario_title}", PAPER, self.small)
+        self._line(rect.x + 34, rect.y + 66, "Pick which model handles each kind of thinking.", (224, 229, 216), self.small)
+
+        y = rect.y + 108
+        for index, role in enumerate(MODEL_ROLES):
+            row = self.pygame.Rect(rect.x + 34, y, rect.w - 68, 42)
+            active = index == selected
+            self.pygame.draw.rect(self.screen, PAPER if active else (34, 61, 48), row, border_radius=4)
+            self.pygame.draw.rect(self.screen, GOLD if active else GOLD_DARK, row, width=2 if active else 1, border_radius=4)
+            role_colour = INK if active else PAPER
+            model_colour = (45, 35, 22) if active else (238, 238, 220)
+            model = str(draft.get(role) or "(server default)")
+            cursor = "_" if active and editing and (self.pygame.time.get_ticks() // 450) % 2 == 0 else ""
+            self._line(row.x + 14, row.y + 11, role, role_colour, self.label)
+            self._line(row.x + 178, row.y + 12, (model + cursor)[:62], model_colour, self.small)
+            y += 48
+
+        status = str(settings_ui.get("status") or "")
+        self._line(rect.x + 34, rect.bottom - 86, status[:92], (238, 214, 161), self.small)
+        if available:
+            self._line(rect.x + 34, rect.bottom - 62, ("Known: " + ", ".join(available[:5]))[:96], (205, 215, 198), self.tiny)
+        else:
+            self._line(rect.x + 34, rect.bottom - 62, "Known: none yet. R tries local Ollama discovery; typing any model name also works.", (205, 215, 198), self.tiny)
+        self._line(rect.x + 34, rect.bottom - 32, "Up/Down select   Enter edit   Tab cycle known   Delete clear   Ctrl+S save   R refresh   Esc close", PAPER, self.tiny)
+
     def _draw_text_chat(self, world: WorldState, text_chat: dict) -> None:
-        self._dark_overlay(142)
+        self._dark_overlay(72)
         target_ids = list(text_chat.get("target_ids", []))
         agents = [world.agents[agent_id] for agent_id in target_ids if agent_id in world.agents]
         names = ", ".join(agent.name for agent in agents) or "nobody"
         mode = str(text_chat.get("mode", "group"))
         title = str(text_chat.get("title") or ("Group Chat" if mode == "group" else "Talk"))
-        rect = self.pygame.Rect(226, 74, 828, 500)
+        rect = self.pygame.Rect(170, 398, 940, 306)
         self._ornate_panel(rect, GREEN_PANEL, title)
         lead = f"Facing: {names}" if mode == "direct" else f"Nearby: {names}"
-        self._line(rect.x + 26, rect.y + 42, lead, PAPER, self.small)
+        self._line(rect.x + 28, rect.y + 28, lead, PAPER, self.small)
 
-        x = rect.x + 26
-        y = rect.y + 76
-        input_rect = self.pygame.Rect(rect.x + 26, rect.bottom - 86, rect.w - 52, 48)
+        portrait_rect = self.pygame.Rect(rect.x + 28, rect.y + 58, 172, 206)
+        lead_agent = agents[0] if agents else None
+        if lead_agent:
+            avatar = self.art.character_sprite(lead_agent.id, lead_agent.emotion, lead_agent.avatar_folder) or self._load_avatar(lead_agent)
+            if avatar:
+                self._draw_sprite(avatar, portrait_rect)
+            else:
+                self.pygame.draw.rect(self.screen, EMOTION_COLOURS.get(lead_agent.emotion, PAPER), portrait_rect, border_radius=5)
+            self.pygame.draw.rect(self.screen, GOLD, portrait_rect, width=2, border_radius=5)
+            self._small_nameplate(self.pygame.Rect(portrait_rect.x, portrait_rect.bottom + 6, portrait_rect.w, 24), f"{lead_agent.name} / {lead_agent.emotion}")
+
+        dialogue_rect = self.pygame.Rect(rect.x + 224, rect.y + 54, rect.w - 252, 138)
+        self.pygame.draw.rect(self.screen, (35, 67, 52), dialogue_rect, border_radius=4)
+        self.pygame.draw.rect(self.screen, GOLD_DARK, dialogue_rect, width=2, border_radius=4)
         rows = self._chat_rows_for_targets(world, target_ids)
-        max_rows = max(1, (input_rect.y - y - 12) // 20)
+        latest = self._latest_chat_line_for_targets(world, target_ids)
         scroll = max(0, int(text_chat.get("scroll", 0)))
-        end = max(0, len(rows) - scroll)
-        start = max(0, end - max_rows)
-        for speaker, text, colour in rows[start:end]:
-            if speaker:
-                self._line(x, y, speaker[:12], colour, self.small)
-            self._line(x + 118, y, text, (240, 238, 220), self.small)
-            y += 20
-        if start > 0:
-            self._line(rect.right - 116, rect.y + 44, f"{start} older", (238, 214, 161), self.tiny)
-        if end < len(rows):
-            self._line(rect.right - 128, input_rect.y - 24, f"{len(rows) - end} newer", (238, 214, 161), self.tiny)
+        if scroll and rows:
+            max_rows = 5
+            end = max(0, len(rows) - scroll)
+            start = max(0, end - max_rows)
+            y = dialogue_rect.y + 16
+            for speaker, text, colour in rows[start:end]:
+                if speaker:
+                    self._line(dialogue_rect.x + 16, y, speaker[:12], colour, self.small)
+                self._line(dialogue_rect.x + 120, y, text, (240, 238, 220), self.small)
+                y += 20
+            self._line(dialogue_rect.right - 150, dialogue_rect.y + 10, "history scroll", (238, 214, 161), self.tiny)
+        elif latest:
+            speaker_colour = (255, 241, 166) if latest.source == "player" else (174, 220, 238)
+            self._line(dialogue_rect.x + 18, dialogue_rect.y + 14, f"{latest.speaker_name}:", speaker_colour, self.label)
+            y = dialogue_rect.y + 46
+            for line in self._wrap(latest.content, 78, 4):
+                self._line(dialogue_rect.x + 18, y, line, (248, 244, 220), self.font)
+                y += 24
+        else:
+            self._line(dialogue_rect.x + 18, dialogue_rect.y + 48, "Say something.", (248, 244, 220), self.font)
 
+        input_rect = self.pygame.Rect(rect.x + 224, rect.bottom - 86, rect.w - 252, 48)
         self.pygame.draw.rect(self.screen, (250, 240, 188), input_rect, border_radius=3)
         self.pygame.draw.rect(self.screen, GOLD_DARK, input_rect, width=2, border_radius=3)
         text = str(text_chat.get("text", ""))
         cursor = "_" if (self.pygame.time.get_ticks() // 450) % 2 == 0 else ""
         self._line(input_rect.x + 14, input_rect.y + 13, (text + cursor)[-88:], INK, self.label)
         hint = "Type / Enter send / Up Down scroll / Esc close" if mode == "direct" else "Type / Enter send to adjacent agents / Up Down scroll / Esc close"
-        self._line(rect.x + 26, rect.bottom - 26, hint, PAPER, self.small)
+        self._line(input_rect.x, rect.bottom - 26, hint, PAPER, self.small)
 
     def _chat_lines_for_targets(self, world: WorldState, target_ids: list[str]) -> list[Any]:
         target_set = set(target_ids)
@@ -792,6 +925,10 @@ class Renderer:
             elif line.speaker_id in target_set:
                 result.append(line)
         return result
+
+    def _latest_chat_line_for_targets(self, world: WorldState, target_ids: list[str]) -> Any | None:
+        lines = self._chat_lines_for_targets(world, target_ids)
+        return lines[-1] if lines else None
 
     def _chat_rows_for_targets(self, world: WorldState, target_ids: list[str]) -> list[tuple[str, str, tuple[int, int, int]]]:
         rows: list[tuple[str, str, tuple[int, int, int]]] = []
@@ -919,6 +1056,15 @@ class Renderer:
         else:
             lines.append(("body", "No explicit claims recorded for this agent yet."))
 
+        lines.append(("header", "Recent Beliefs From Perception"))
+        beliefs = [belief for belief in world.agent_beliefs[-12:] if belief.agent_id == agent.id]
+        if beliefs:
+            for belief in beliefs[-5:]:
+                tags = ",".join(belief.emotional_tags[:3]) or "plain"
+                lines.append(("body", f"- {belief.subject} {belief.predicate} {belief.object}. {belief.source}, {belief.confidence:.2f}, tags={tags}."))
+        else:
+            lines.append(("body", "No structured perception beliefs recorded yet."))
+
         lines.append(("header", "Recent Dialogue"))
         chat = [line for line in world.chat_log[-12:] if line.speaker_id in {agent.id, "player"}]
         if chat:
@@ -947,7 +1093,7 @@ class Renderer:
             for x in range(world.grid.width):
                 map_rect = self.pygame.Rect(ox + x * tile, oy + y * tile, tile - 1, tile - 1)
                 kind = world.grid.tiles[y][x].kind
-                self.pygame.draw.rect(self.screen, TILE_COLOURS.get(kind, (80, 80, 80)), map_rect)
+                self.pygame.draw.rect(self.screen, self._tile_colour(world, kind), map_rect)
         for obj in world.objects.values():
             self._draw_minimap_dot(ox, oy, tile, obj.position, GOLD)
         for agent in world.agents.values():
@@ -1042,7 +1188,7 @@ class Renderer:
 
     def _scene_image_ahead(self, world: WorldState, layer: str) -> Any | None:
         front = self._relative_position(world.player.position, world.player_facing, 1, 0)
-        tile_kind = world.grid.tile_at(front).kind if world.grid.in_bounds(front) else "rock"
+        tile_kind = world.grid.tile_at(front).kind if world.grid.in_bounds(front) else "wall"
         return self.art.scene(tile_kind, layer)
 
     def _scene_image_for_kind(self, tile_kind: str, layer: str, generic: bool) -> Any | None:
@@ -1057,7 +1203,14 @@ class Renderer:
     def _sight_blocked(self, world: WorldState, pos: Position) -> bool:
         if not world.grid.in_bounds(pos):
             return True
-        return world.grid.tile_at(pos).kind == "rock"
+        tile = world.grid.tile_at(pos)
+        tile_def = world.grid.tile_defs.get(tile.kind, {})
+        if "blocks_sight" in tile_def:
+            return bool(tile_def.get("blocks_sight"))
+        tags = set(tile.tags or tile_def.get("tags") or [])
+        if "transparent" in tags or "water" in tags:
+            return False
+        return not tile.walkable or tile.kind == "wall"
 
     def _front_wall_face_visible(self, world: WorldState, depth: int, side: int) -> bool:
         if depth == 1:
@@ -1092,13 +1245,50 @@ class Renderer:
 
     def _tile_colour_at(self, world: WorldState, pos: Position) -> tuple[int, int, int]:
         if not world.grid.in_bounds(pos):
-            return TILE_COLOURS["rock"]
-        return TILE_COLOURS.get(world.grid.tile_at(pos).kind, (80, 80, 80))
+            return TILE_COLOURS["wall"]
+        return self._tile_colour(world, world.grid.tile_at(pos).kind)
 
     def _tile_name(self, world: WorldState, pos: Position) -> str:
         if not world.grid.in_bounds(pos):
-            return "edge of the island"
-        return TILE_NAMES.get(world.grid.tile_at(pos).kind, "unknown ground")
+            return "edge of map"
+        tile = world.grid.tile_at(pos)
+        return tile.label or self._tile_name_for_kind(world, tile.kind, "unknown ground")
+
+    def _tile_name_for_kind(self, world: WorldState, kind: str, fallback: str = "tile") -> str:
+        tile_def = world.grid.tile_defs.get(kind, {})
+        render = tile_def.get("render") if isinstance(tile_def.get("render"), dict) else {}
+        return str(tile_def.get("label") or render.get("label") or TILE_NAMES.get(kind, fallback))
+
+    def _tile_colour(self, world: WorldState, kind: str) -> tuple[int, int, int]:
+        tile_def = world.grid.tile_defs.get(kind, {})
+        render = tile_def.get("render") if isinstance(tile_def.get("render"), dict) else {}
+        raw = render.get("colour") or render.get("color") or tile_def.get("colour") or tile_def.get("color")
+        if isinstance(raw, list) and len(raw) >= 3:
+            return (int(raw[0]), int(raw[1]), int(raw[2]))
+        tags = set(tile_def.get("tags") or [])
+        if "water" in tags:
+            return TILE_COLOURS["water"]
+        if "blocked" in tags or not bool(tile_def.get("walkable", True)):
+            return TILE_COLOURS["wall"]
+        return TILE_COLOURS.get(kind, (80, 80, 80))
+
+    def _object_colour(self, obj: WorldObject) -> tuple[int, int, int]:
+        raw = obj.render.get("colour") or obj.render.get("color")
+        if isinstance(raw, list) and len(raw) >= 3:
+            return (int(raw[0]), int(raw[1]), int(raw[2]))
+        for tag in obj.tags:
+            if tag in OBJECT_COLOURS:
+                return OBJECT_COLOURS[tag]
+        if obj.object_type in OBJECT_COLOURS:
+            return OBJECT_COLOURS[obj.object_type]
+        return (190, 176, 126)
+
+    def _tile_has_tag(self, world: WorldState, kind: str, tag: str) -> bool:
+        return tag in set(world.grid.tile_defs.get(kind, {}).get("tags") or [])
+
+    def _sync_art_pack(self, world: WorldState) -> None:
+        if world.art_pack and world.art_pack != self.art.pack_name:
+            self.art = ArtAssets(self.pygame, self.base_dir, world.art_pack)
 
     def _object_at(self, world: WorldState, pos: Position) -> WorldObject | None:
         for obj in world.objects.values():

@@ -3,6 +3,10 @@
     "id": "rain_squall",
     "title": "Cold Rain Squall",
     "tags": ["weather", "survival", "exhaustion"],
+    "pacing_category": "pressure",
+    "weight": 1.0,
+    "max_occurrences": 1,
+    "cooldown_turns": 12,
     "requires": {
       "turn_gte": 6,
       "pressure_lte": { "exhaustion": 0.72, "danger": 0.82 },
@@ -19,7 +23,7 @@
       },
       {
         "type": "agent_need_delta_if_unprotected",
-        "protected_near_kinds": ["campfire", "shelter"],
+        "protected_near_tags": ["fire", "warmth", "shelter", "safety"],
         "protected_distance": 2,
         "protected_delta": { "fatigue": 4, "stress": 3 },
         "unprotected_delta": { "fatigue": 12, "stress": 10 },
@@ -29,6 +33,34 @@
           "kind": "body",
           "intensity": 0.7
         }
+      }
+    ]
+  },
+  {
+    "id": "brief_recovery_lull",
+    "title": "Brief Recovery Lull",
+    "tags": ["recovery", "social", "opportunity"],
+    "pacing_category": "recovery",
+    "intensity": "minor",
+    "weight": 0.8,
+    "max_occurrences": 2,
+    "cooldown_turns": 10,
+    "requires": {
+      "turn_gte": 4,
+      "chaos_gte": 0.58
+    },
+    "effects": [
+      {
+        "type": "log",
+        "event_type": "recovery_lull",
+        "message": "For a few breaths, nothing gets worse. The group has room to think.",
+        "source": "director",
+        "salience": 5,
+        "tags": ["recovery", "social", "opportunity"]
+      },
+      {
+        "type": "all_agent_need_delta",
+        "delta": { "stress": -4, "social": -2 }
       }
     ]
   }

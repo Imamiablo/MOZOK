@@ -14,7 +14,7 @@ Emotion = Literal[
     "suspicious",
 ]
 
-TileKind = Literal["sand", "grass", "forest", "water", "rock", "camp", "cave", "ruins"]
+TileKind = str
 
 
 @dataclass(slots=True)
@@ -188,6 +188,20 @@ class ClaimRecord:
 
 
 @dataclass(slots=True)
+class AgentBelief:
+    turn: int
+    agent_id: str
+    subject: str
+    predicate: str
+    object: str = ""
+    confidence: float = 0.0
+    source: str = "witnessed"
+    world_event_id: str = ""
+    emotional_tags: list[str] = field(default_factory=list)
+    text: str = ""
+
+
+@dataclass(slots=True)
 class Player:
     position: Position
     inventory: list[str] = field(default_factory=list)
@@ -205,6 +219,12 @@ class WorldObject:
     position: Position
     interactions: list[str]
     tags: list[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    object_type: str = "object"
+    sprite: str = ""
+    properties: dict[str, Any] = field(default_factory=dict)
+    render: dict[str, Any] = field(default_factory=dict)
+    interaction_defs: dict[str, Any] = field(default_factory=dict)
     state: dict[str, Any] = field(default_factory=dict)
     capability_accepts: list[str] = field(default_factory=list)
     capability_effects: dict[str, Any] = field(default_factory=dict)

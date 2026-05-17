@@ -22,6 +22,16 @@ class ChatRequest(BaseModel):
         le=40,
         description="How many recent short-term messages to include in the prompt. Use 0 to disable.",
     )
+    llm_model: str | None = Field(
+        default=None,
+        description="Optional exact model name for this LLM call. When omitted, llm_model_role is resolved through server configuration.",
+        examples=["qwen2.5-coder:32b"],
+    )
+    llm_model_role: str | None = Field(
+        default=None,
+        description="Optional model role such as chat, scene, semantic, fast, reasoning, summarizer, or maintenance.",
+        examples=["scene", "semantic", "fast"],
+    )
 
     agent_mode: str | None = Field(
         default=None,
@@ -318,6 +328,8 @@ class ChatResponse(BaseModel):
     agent_id: str
     session_id: str
     response: str
+    llm_model: str | None = None
+    llm_model_role: str | None = None
     agent_mode: dict[str, Any] | None = None
     agent_mode_resolution: dict[str, Any] | None = None
     used_memory_ids: list[int]

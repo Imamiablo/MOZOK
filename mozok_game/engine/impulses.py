@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mozok_game.engine.appraisal import appraisal_bonus_for_impulse, appraise_agent_beliefs
 from mozok_game.engine.inventory import item_capabilities
 from mozok_game.engine.models import Agent, WorldEvent, WorldObject
 from mozok_game.engine.world_state import WorldState
@@ -25,11 +26,16 @@ class Impulse:
 
 def generate_impulses(world: WorldState, agent: Agent, recent_events: list[WorldEvent] | None = None) -> list[Impulse]:
     recent = recent_events or world.event_log[-10:]
-    atoms = load_drama_atoms()
+    atoms = world.drama_atoms or load_drama_atoms()
+    appraisals = appraise_agent_beliefs(world, agent)
     impulses: list[Impulse] = []
     for atom in atoms:
         impulse = _impulse_from_atom(world, agent, recent, atom)
         if impulse and impulse.score >= 18.0:
+            bonus, bonus_reason = appraisal_bonus_for_impulse(appraisals, impulse.kind, impulse.atom_id)
+            if bonus:
+                impulse.score += bonus
+                impulse.reason = f"{impulse.reason}; {bonus_reason}"
             impulses.append(impulse)
     impulses.sort(key=lambda item: item.score, reverse=True)
     return impulses

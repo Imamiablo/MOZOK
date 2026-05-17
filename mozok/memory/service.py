@@ -63,7 +63,7 @@ class MemoryService:
         self.db = db
         self.embedding_service = embedding_service
         self.vector_index = vector_index
-        self.summarizer = MemorySummarizer(llm_client=OllamaOpenAIClient())
+        self.summarizer = MemorySummarizer(llm_client=OllamaOpenAIClient(default_role="summarizer"))
 
     # ---------------------------------------------------------------------
     # Agent policy helpers

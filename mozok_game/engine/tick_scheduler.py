@@ -4,9 +4,11 @@ from mozok_game.engine.capabilities import execute_item_action
 from mozok_game.engine.commitments import clear_legacy_commitment_cache, sync_legacy_commitment_cache
 from mozok_game.engine.director import run_social_director, update_cognitive_trace
 from mozok_game.engine.interactions import talk_to_agent
-from mozok_game.engine.inventory import add_item, has_item, item_name, transfer_item
+from mozok_game.engine.inventory import has_item, item_name, transfer_item
 from mozok_game.engine.needs import apply_environment_needs, update_emotion
+from mozok_game.engine.object_effects import choose_default_interaction, execute_inventory_interaction, execute_object_interaction
 from mozok_game.engine.pathfinding import next_step_towards
+from mozok_game.engine.scene_validation import validate_agent_dialogue
 from mozok_game.engine.storylets import run_storylet_director
 from mozok_game.engine.world_state import WorldState
 from mozok_game.mozok_client.client import BrainClient
@@ -15,14 +17,14 @@ from mozok_game.mozok_client.client import BrainClient
 def run_agent_ticks(world: WorldState, brain: BrainClient) -> None:
     _run_world_pressure_events(world)
     recent = world.event_log[-10:]
-    campfire = world.object_by_kind("campfire")
-    cave = world.object_by_kind("cave_entrance")
+    safety_objects = [obj for obj in world.objects.values() if {"fire", "safety", "shelter"} & set(obj.tags)]
+    danger_objects = [obj for obj in world.objects.values() if {"danger", "mystery"} & set(obj.tags)]
     for agent in world.agents.values():
         if not agent.alive:
             continue
-        near_campfire = bool(campfire and agent.position.manhattan(campfire.position) <= 2)
-        near_cave = bool(cave and agent.position.manhattan(cave.position) <= 2)
-        apply_environment_needs(agent, near_campfire=near_campfire, near_cave=near_cave)
+        near_safety = any(agent.position.manhattan(obj.position) <= 2 for obj in safety_objects)
+        near_danger = any(agent.position.manhattan(obj.position) <= 2 for obj in danger_objects)
+        apply_environment_needs(agent, near_safety=near_safety, near_danger=near_danger)
         if _apply_player_commitment(world, agent.id):
             update_emotion(agent)
             update_cognitive_trace(world, agent, agent.last_action, agent.last_rationale)
@@ -34,7 +36,7 @@ def run_agent_ticks(world: WorldState, brain: BrainClient) -> None:
         if not intent.rationale.startswith("MOZOK API:"):
             update_cognitive_trace(world, agent, intent.tool_name, intent.rationale)
         _maybe_start_player_conversation(world, agent.id)
-    run_social_director(world)
+    run_social_director(world, getattr(brain, "weave_social_scene", None))
     world.turn += 1
 
 
@@ -179,7 +181,7 @@ def _apply_active_commitment(world: WorldState, agent) -> bool:
         agent.current_target_object_id = target_obj.id
         agent.current_target_agent_id = ""
         if agent.position.manhattan(target_obj.position) <= 1:
-            if target_obj.kind == "cave_entrance" and "rope" in agent.inventory and not target_obj.state.get("rope_anchored") and agent.needs.stress + agent.social_to_player.fear > 58:
+            if "anchor" in target_obj.capability_accepts and "rope" in agent.inventory and not target_obj.state.get("rope_anchored") and agent.needs.stress + agent.social_to_player.fear > 58:
                 execute_item_action(world, agent.id, "rope", target_obj.id, "anchor", commitment.goal)
                 return True
             _agent_use_object(world, agent.id, target_obj.id)
@@ -247,8 +249,8 @@ def _commitment_interrupt_reason(world: WorldState, agent, obj=None) -> str:
         return f"wound risk is too high to continue; health={agent.health:.0f}"
     if value >= 96:
         return f"{urgent} became critical at {value:.0f}"
-    if obj and obj.kind == "cave_entrance" and agent.needs.stress + agent.social_to_player.fear > 150 and "rope" not in agent.inventory:
-        return "fear around the cave exceeded the task without rope or a safer plan"
+    if obj and {"danger", "mystery"} & set(obj.tags) and agent.needs.stress + agent.social_to_player.fear > 150 and "rope" not in agent.inventory:
+        return f"fear around {obj.name} exceeded the task without a safer plan"
     return ""
 
 
@@ -292,12 +294,14 @@ def _maybe_start_player_conversation(world: WorldState, agent_id: str) -> None:
         or agent.active_commitment
         or agent.command_hold_turns > 0
         or agent.needs.social > 62
-        or {"cave", "danger", "conflict", "decision", "social_risk"} & recent_tags
+        or (_tags_mean_mystery(recent_tags) or {"danger", "conflict", "decision", "social_risk"} & recent_tags)
         or any(claim.listener_id == agent.id for claim in world.claim_log[-4:])
     )
     if not has_reason:
         return
     line = _initiative_line(world, agent_id, recent_tags)
+    if any(prior.speaker_id == agent.id and prior.content == line for prior in world.chat_log[-8:]):
+        line = _variant_line(world, agent, ["I need a second with you before we move.", "Stay close enough to answer me, please.", "I am trying to make sense of what just changed."])
     agent.last_player_contact_turn = world.turn
     agent.last_dialogue = f"{agent.name}: {line}"
     agent.needs.social = max(0.0, agent.needs.social - 10.0)
@@ -317,23 +321,42 @@ def _initiative_line(world: WorldState, agent_id: str, recent_tags: set[str]) ->
     recent_claims = [claim for claim in world.claim_log[-6:] if claim.listener_id == agent.id]
     if recent_claims:
         claim = recent_claims[-1]
-        return f"You said this: '{claim.text}' I am treating it as unverified until the world proves it."
+        return _variant_line(
+            world,
+            agent,
+            [
+                f"You said this: '{claim.text}' I am treating it as unverified until the world proves it.",
+                f"I heard your claim about this: '{claim.text}'. I am not turning it into fact yet.",
+                f"I am holding your statement separately from the world evidence: '{claim.text}'.",
+            ],
+        )
     if agent.active_commitment:
         target = world.objects.get(agent.active_commitment.target_object_id) if agent.active_commitment.target_object_id else None
         if target:
-            return f"I am still working on this: {agent.active_commitment.goal}. Target: {target.name}."
-        return f"I am still keeping my commitment: {agent.active_commitment.goal}."
+            return _variant_line(world, agent, [f"I am still working on this: {agent.active_commitment.goal}. Target: {target.name}.", f"I have not dropped the plan. I am still oriented toward {target.name}."])
+        return _variant_line(world, agent, [f"I am still keeping my commitment: {agent.active_commitment.goal}.", "I have not forgotten what I agreed to do."])
     if agent.following_player:
-        return "I am still with you. Tell me if this stops being a good idea."
+        return _variant_line(world, agent, ["I am still with you. Tell me if this stops being a good idea.", "I am matching your pace. Do not make me guess the next risk."])
     if agent.command_hold_turns > 0:
-        return "I did what you asked. I am staying here for a moment in case you need to talk."
-    if "cave" in recent_tags and agent.traits.get("curiosity", 0.0) > 0.65:
-        return "Before we move again: the cave is becoming a pattern, not just a place."
+        return _variant_line(world, agent, ["I did what you asked. I am staying here for a moment in case you need to talk.", "I paused here because you asked. Use the moment if you need it."])
+    if _tags_mean_mystery(recent_tags) and agent.traits.get("curiosity", 0.0) > 0.65:
+        return _variant_line(world, agent, ["Before we move again: this pattern is becoming more than scenery.", "I keep turning the evidence over in my head. It does not feel random."])
     if "conflict" in recent_tags or "social_risk" in recent_tags:
-        return "We need rules before hunger starts making decisions for us."
+        return _variant_line(world, agent, ["We need rules before hunger starts making decisions for us.", "If we do not name the rule now, fear will write it for us."])
     if agent.needs.social > 62:
-        return "Can we talk for a second? Silence is starting to feel like another problem."
-    return "I need your attention for a moment."
+        return _variant_line(world, agent, ["Can we talk for a second? Silence is starting to feel like another problem.", "I need to hear a human answer before this place becomes the only voice."])
+    return _variant_line(world, agent, ["I need your attention for a moment.", "Hold on. I need to say something before we keep moving."])
+
+
+def _variant_line(world: WorldState, agent, options: list[str]) -> str:
+    if not options:
+        return ""
+    seed = sum(ord(char) for char in agent.id) + world.turn
+    return options[seed % len(options)]
+
+
+def _tags_mean_mystery(tags: set[str]) -> bool:
+    return bool(tags & {"mystery", "unknown", "evidence", "signal", "sound", "anomaly"})
 
 
 def apply_agent_intent(world: WorldState, agent_id: str, tool_name: str, parameters: dict, dialogue: str = "", rationale: str = "") -> None:
@@ -348,6 +371,10 @@ def apply_agent_intent(world: WorldState, agent_id: str, tool_name: str, paramet
         agent.current_target_object_id = ""
         agent.current_target_agent_id = ""
         if dialogue:
+            validation = validate_agent_dialogue(world, agent, dialogue)
+            if validation.changed:
+                agent.brain_risk = "Grounded dialogue rewrite: " + "; ".join(validation.rejected_physical_claims[:2])
+            dialogue = validation.text
             agent.last_dialogue = dialogue
             world.log("agent_dialogue", dialogue, source=agent.id, salience=6, tags=["dialogue", "agent"], metadata={"agent_id": agent.id, "rationale": rationale})
         else:
@@ -382,6 +409,10 @@ def apply_agent_intent(world: WorldState, agent_id: str, tool_name: str, paramet
             return
 
         clean = _clean_agent_dialogue(agent.name, target.name, dialogue) or f"{target.name}, we need to compare what we think is happening."
+        validation = validate_agent_dialogue(world, agent, clean)
+        if validation.changed:
+            agent.brain_risk = "Grounded dialogue rewrite: " + "; ".join(validation.rejected_physical_claims[:2])
+        clean = validation.text
         agent.last_dialogue = f"{agent.name}: {clean}"
         agent.needs.social = max(0.0, agent.needs.social - 14.0)
         world.last_agent_conversation_turn = world.turn
@@ -416,6 +447,10 @@ def apply_agent_intent(world: WorldState, agent_id: str, tool_name: str, paramet
         if transfer_item(world, agent.id, target.id, item_id, rationale):
             if dialogue:
                 clean = _clean_agent_dialogue(agent.name, target.name, dialogue)
+                validation = validate_agent_dialogue(world, agent, clean)
+                if validation.changed:
+                    agent.brain_risk = "Grounded dialogue rewrite: " + "; ".join(validation.rejected_physical_claims[:2])
+                clean = validation.text
                 agent.last_dialogue = f"{agent.name}: {clean}"
                 world.chat(agent.id, agent.name, clean, source="agent", audience_ids=[target.id])
             if item_id == "medkit" and "wounded" in target.status_flags:
@@ -450,7 +485,7 @@ def apply_agent_intent(world: WorldState, agent_id: str, tool_name: str, paramet
         agent.current_target_object_id = obj.id
         agent.current_target_agent_id = ""
         if agent.position.manhattan(obj.position) <= 1:
-            _agent_use_object(world, agent_id, obj.id)
+            _agent_use_object(world, agent_id, obj.id, str(parameters.get("interaction_id") or ""))
             return
         blocked = world.occupied_positions(exclude_agent_id=agent.id)
         step = next_step_towards(world.grid, agent.position, obj.position, blocked=blocked)
@@ -477,69 +512,17 @@ def _clean_agent_dialogue(speaker_name: str, target_name: str, dialogue: str) ->
     return clean
 
 
-def _agent_use_object(world: WorldState, agent_id: str, object_id: str) -> None:
+def _agent_use_object(world: WorldState, agent_id: str, object_id: str, interaction_id: str = "") -> None:
     agent = world.agents[agent_id]
     obj = world.objects[object_id]
     agent.current_plan = f"use_object -> {obj.name}"
     agent.current_target_object_id = obj.id
     agent.current_target_agent_id = ""
-    if obj.kind in {"knife", "rope", "medkit", "journal_page"}:
-        if obj.state.get("taken"):
-            world.log("agent_item_missing", f"{agent.name} checks {obj.name}, but it is gone.", source=agent.id, tags=["agent", "item"])
-            return
-        item_id = str(obj.state.get("item_id") or obj.kind)
-        obj.state["taken"] = True
-        add_item(world, agent.id, item_id)
-        world.log("agent_take_item", f"{agent.name} picks up {item_name(item_id)}.", source=agent.id, salience=6, tags=["agent", "item"], metadata={"item_id": item_id})
-        if item_id == "medkit" and "wounded" in agent.status_flags:
-            _use_agent_inventory_item(world, agent.id, "medkit")
-        return
-    if obj.kind == "poisonous_berries":
-        amount = int(obj.state.get("berries", 0))
-        if amount <= 0:
-            world.log("agent_item_missing", f"{agent.name} checks {obj.name}, but the berries are gone.", source=agent.id, tags=["agent", "item", "food"])
-            return
-        obj.state["berries"] = amount - 1
-        add_item(world, agent.id, "poison_berries")
-        agent.needs.hunger = max(0.0, agent.needs.hunger - 20.0)
-        agent.needs.stress += 8.0
-        world.log("agent_risky_food", f"{agent.name} eats a few suspicious berries. It helps hunger, but nobody knows whether that was safe.", source=agent.id, salience=8, tags=["agent", "food", "toxic", "risk"])
-        return
-    if obj.kind == "locked_supply_box":
-        if obj.state.get("open"):
-            world.log("agent_inspect_object", f"{agent.name} checks the opened supply box.", source=agent.id, tags=["agent", "inspect", "supplies"])
-            return
-        if "knife" in agent.inventory:
-            execute_item_action(world, agent.id, "knife", obj.id, "pry", "agent reached lockbox")
-            return
-        world.log("agent_locked_box", f"{agent.name} studies {obj.name}. They need a sharp tool to open it.", source=agent.id, tags=["agent", "locked", "supplies"])
-        return
-    if obj.kind == "water_source":
-        agent.needs.thirst = max(0.0, agent.needs.thirst - 45.0)
-        world.log("agent_drink", f"{agent.name} drinks from {obj.name}.", source=agent.id, tags=["agent", "water"])
-        return
-    if obj.kind == "food_crate":
-        amount = int(obj.state.get("food", 0))
-        if amount > 0:
-            obj.state["food"] = amount - 1
-            agent.needs.hunger = max(0.0, agent.needs.hunger - 45.0)
-            world.log("agent_eat", f"{agent.name} takes a ration. Food left: {obj.state['food']}.", source=agent.id, tags=["agent", "food"])
-        else:
-            agent.social_to_player.resentment += 4.0
-            agent.social_to_player.clamp()
-            world.log("agent_food_missing", f"{agent.name} checks {obj.name}. It is empty. Their face tightens.", source=agent.id, tags=["agent", "conflict", "food"])
-        return
-    if obj.kind in {"campfire", "shelter"}:
-        agent.needs.fatigue = max(0.0, agent.needs.fatigue - 18.0)
-        agent.needs.stress = max(0.0, agent.needs.stress - 12.0)
-        world.log("agent_rest", f"{agent.name} rests near {obj.name}.", source=agent.id, tags=["agent", "rest"])
-        return
-    if obj.kind == "cave_entrance":
-        agent.needs.stress += 10.0
-        agent.needs.curiosity = max(0.0, agent.needs.curiosity - 15.0)
-        world.log("agent_inspect_cave", f"{agent.name} studies the cave entrance and goes very quiet.", source=agent.id, salience=8, tags=["agent", "cave", "mystery"])
-        return
-    world.log("agent_inspect_object", f"{agent.name} inspects {obj.name}.", source=agent.id, tags=["agent", "inspect"])
+    interaction = interaction_id or choose_default_interaction(world, agent.id, obj)
+    before_inventory = list(agent.inventory)
+    result = execute_object_interaction(world, agent.id, obj, interaction, reason="agent reached object")
+    if result.ok and "medkit" in agent.inventory and "medkit" not in before_inventory and "wounded" in agent.status_flags:
+        _use_agent_inventory_item(world, agent.id, "medkit")
 
 
 def _use_agent_inventory_item(world: WorldState, agent_id: str, item_id: str) -> None:
@@ -547,25 +530,6 @@ def _use_agent_inventory_item(world: WorldState, agent_id: str, item_id: str) ->
     if item_id not in agent.inventory:
         world.log("agent_item_missing", f"{agent.name} reaches for {item_name(item_id)}, but does not have it.", source=agent.id, tags=["agent", "item"])
         return
-    if item_id == "ration":
-        agent.inventory.remove(item_id)
-        agent.needs.hunger = max(0.0, agent.needs.hunger - 48.0)
-        world.log("agent_eat_inventory", f"{agent.name} eats a ration from their pack.", source=agent.id, tags=["agent", "food", "item"])
-        return
-    if item_id == "medkit":
-        agent.inventory.remove(item_id)
-        agent.health = min(100.0, agent.health + 35.0)
-        if agent.health >= 75 and "wounded" in agent.status_flags:
-            agent.status_flags.remove("wounded")
-        agent.needs.stress = max(0.0, agent.needs.stress - 12.0)
-        world.log("agent_treat_wound", f"{agent.name} uses a medkit. Health is now {agent.health:.0f}.", source=agent.id, salience=8, tags=["agent", "medical", "item"])
+    result = execute_inventory_interaction(world, agent.id, item_id, "use", reason="agent inventory use")
+    if result.ok and item_id == "medkit":
         world.flash(agent.id, "Wound treated", "Medical supplies changed the body's priorities.", kind="body", intensity=0.8)
-        return
-    if item_id == "poison_berries":
-        agent.inventory.remove(item_id)
-        agent.needs.hunger = max(0.0, agent.needs.hunger - 20.0)
-        agent.health = max(1.0, agent.health - 10.0)
-        agent.needs.stress += 10.0
-        world.log("agent_eat_poison_berries", f"{agent.name} eats suspicious berries and immediately regrets trusting them.", source=agent.id, salience=8, tags=["agent", "food", "toxic", "item"])
-        return
-    world.log("agent_use_item", f"{agent.name} keeps {item_name(item_id)} ready.", source=agent.id, tags=["agent", "item"])
