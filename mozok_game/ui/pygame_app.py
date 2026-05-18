@@ -9,11 +9,12 @@ from mozok_game.engine.interactions import interact_with_object
 from mozok_game.engine.inventory import first_transferable_item, item_name, transfer_item
 from mozok_game.engine.model_settings import MODEL_ROLES, apply_model_preset, discover_ollama_models, load_game_model_settings, merge_discovered_models, save_game_model_settings
 from mozok_game.engine.object_effects import interaction_spec
+from mozok_game.engine.performance import load_performance_settings
 from mozok_game.engine.scene_validation import validate_agent_dialogue
 from mozok_game.engine.speech_actions import apply_agent_decision, decide_agent_response, record_player_claims
 from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import WorldState, load_world
-from mozok_game.mozok_client.client import build_brain_client
+from mozok_game.mozok_client.client import OfflineMozokBrain, build_brain_client
 from mozok_game.ui.renderer import Renderer
 
 
@@ -40,6 +41,7 @@ class PygameApp:
         self.text_chat: dict | None = None
         self.agent_dossier: dict | None = None
         self.model_settings = load_game_model_settings(base_dir)
+        self.performance = load_performance_settings()
         self.model_settings_ui: dict | None = None
         self.last_auto_chat_event_id: str = ""
         self.world.log("brain_mode", getattr(self.brain, "last_status", "Brain client ready"), source="game", salience=4, tags=["debug", "brain"])
@@ -337,6 +339,9 @@ class PygameApp:
             return
         participant_names = [agent.name for agent in agents]
         is_direct = len(agents) == 1
+        if not is_direct and self.world.selected_agent_id:
+            agents.sort(key=lambda item: item.id != self.world.selected_agent_id)
+        llm_reply_budget = len(agents) if is_direct else max(0, self.performance.max_group_chat_llm_replies)
         event_type = "player_direct_chat" if is_direct else "player_group_chat"
         chat_tag = "direct_chat" if is_direct else "group_chat"
         audience = participant_names[0] if is_direct else ", ".join(participant_names)
@@ -356,15 +361,21 @@ class PygameApp:
             decision = decide_agent_response(self.world, agent, parsed)
             if decision.handled:
                 voice = getattr(self.brain, "voice_agent_decision", None)
-                if voice:
+                if voice and (is_direct or llm_reply_budget > 0):
                     voiced = str(voice(self.world, agent, parsed, decision) or "").strip()
                     if voiced:
                         decision.reply = voiced
+                    if not is_direct:
+                        llm_reply_budget = max(0, llm_reply_budget - 1)
                 apply_agent_decision(self.world, agent, parsed, decision)
                 reply = decision.reply
             else:
                 apply_open_dialogue_reaction(self.world, agent, parsed)
-                reply = self.brain.chat(self.world, agent, text, participant_names)
+                if llm_reply_budget > 0:
+                    reply = self.brain.chat(self.world, agent, text, participant_names)
+                    llm_reply_budget -= 1
+                else:
+                    reply = self._local_chat_fallback(agent, text, participant_names)
             reaction = finalise_dialogue_reaction(self.world, agent, before_social, parsed, decision if decision.handled else None)
             self._append_chat_effect(reaction.summary)
             clean = reply.strip()
@@ -389,6 +400,12 @@ class PygameApp:
                     tags=["dialogue", "agent", chat_tag],
                     metadata={"agent_id": agent.id, "participants": participant_names},
                 )
+
+    def _local_chat_fallback(self, agent, text: str, participant_names: list[str]) -> str:
+        fallback = getattr(self.brain, "fallback", None)
+        if fallback and hasattr(fallback, "chat"):
+            return str(fallback.chat(self.world, agent, text, participant_names))
+        return OfflineMozokBrain().chat(self.world, agent, text, participant_names)
 
     def _append_chat_effect(self, summary: str) -> None:
         if not self.text_chat:
@@ -546,6 +563,7 @@ class PygameApp:
         path = save_game_model_settings(self.base_dir, self.model_settings)
         if hasattr(self.brain, "reload_model_settings"):
             self.brain.reload_model_settings()
+        self.performance = load_performance_settings()
         self.model_settings_ui["available"] = list(self.model_settings.available_models)
         self.model_settings_ui["status"] = f"Saved model roles to {path.name}."
         self.world.log("model_settings_saved", "LLM model role settings saved for the sandbox.", tags=["settings", "llm"])

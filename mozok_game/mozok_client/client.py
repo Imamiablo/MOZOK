@@ -4,6 +4,7 @@ import os
 import json
 from dataclasses import asdict
 from pathlib import Path
+from copy import deepcopy
 from typing import Any, Protocol
 
 import requests
@@ -12,6 +13,7 @@ from mozok_game.engine.affordances import build_agent_affordances, choose_offlin
 from mozok_game.engine.director import apply_api_cognitive_trace
 from mozok_game.engine.model_settings import load_game_model_settings
 from mozok_game.engine.models import Agent, AgentIntent, WorldEvent, WorldObject
+from mozok_game.engine.performance import load_performance_settings
 from mozok_game.engine.scene_context import build_scene_context
 from mozok_game.engine.scene_proposal import scene_proposal_from_dict, scene_proposal_prompt_contract, validate_scene_proposal
 from mozok_game.engine.scene_validation import grounding_prompt, validate_agent_dialogue
@@ -99,20 +101,30 @@ class MozokHttpClient:
         self._posted_event_ids: set[str] = set()
         self.base_dir = base_dir or Path(__file__).resolve().parents[1]
         self.model_settings = load_game_model_settings(self.base_dir)
+        self.performance = load_performance_settings()
+        self._llm_tick_counts: dict[int, int] = {}
+        self._last_llm_tick_turn: dict[str, int] = {}
+        self._semantic_cache: dict[tuple[str, int, str, str], ParsedSpeech] = {}
+        self._social_scene_turns: dict[str, int] = {}
 
     def reload_model_settings(self) -> None:
         self.model_settings = load_game_model_settings(self.base_dir)
+        self.performance = load_performance_settings()
 
     def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
+        if not self._should_use_llm_tick(world, agent, recent_events):
+            self.last_status = f"MOZOK API budget: local planner for {agent.name}"
+            return self._fallback(world, agent, recent_events)
         try:
-            for event in recent_events[-4:]:
+            recent_limit = max(1, self.performance.recent_event_limit)
+            for event in recent_events[-recent_limit:]:
                 self._post_world_event(world, agent, event)
 
             urgent, value = agent.needs.most_urgent
             target_hint = self._choose_target_object(world, agent, recent_events)
             affordances = build_agent_affordances(world, agent, recent_events)
             scene_context = build_scene_context(world, agent)
-            known_object_context = self._known_object_context(world)
+            known_object_context = self._known_object_context(world, agent=agent)
             attention_keywords = self._attention_keywords(world, urgent)
             payload = {
                 "world_id": self._world_id(world),
@@ -132,8 +144,8 @@ class MozokHttpClient:
                     f"Affordances: {serialise_affordances(affordances)}"
                 ),
                 "pull_world_events": False,
-                "perception_events": [self._event_to_perception(event) for event in recent_events[-8:]],
-                "sensory_inputs": [self._event_to_sensory(event) for event in recent_events[-8:]],
+                "perception_events": [self._event_to_perception(event) for event in recent_events[-recent_limit:]],
+                "sensory_inputs": [self._event_to_sensory(event) for event in recent_events[-recent_limit:]],
                 "attention_focus_keywords": attention_keywords,
                 "available_tools": [
                     {
@@ -209,9 +221,9 @@ class MozokHttpClient:
                     "position": asdict(agent.position),
                     "target_hint": target_hint.id if target_hint else None,
                     "affordances": serialise_affordances(affordances),
-                    "authoritative_state": world.export_authoritative_state(),
-                    "known_objects": self._visible_object_records(world),
-                    "scene_context": scene_context.to_prompt_dict(),
+                    "authoritative_state": self._authoritative_state_context(world, agent, recent_events),
+                    "known_objects": self._visible_object_records(world, agent=agent),
+                    "scene_context": self._scene_context_payload(scene_context),
                 },
             }
             response = requests.post(f"{self.base_url}/agents/{agent.id}/tick", json=payload, timeout=self.timeout)
@@ -241,21 +253,23 @@ class MozokHttpClient:
 
     def chat(self, world: WorldState, agent: Agent, message: str, participant_names: list[str]) -> str:
         try:
-            recent_events = world.event_log[-8:]
-            for event in recent_events[-4:]:
+            recent_limit = max(1, self.performance.recent_event_limit)
+            recent_events = world.event_log[-recent_limit:]
+            for event in recent_events:
                 self._post_world_event(world, agent, event)
 
             group_text = ", ".join(participant_names)
             transcript = self._group_transcript(world)
-            known_object_context = self._known_object_context(world)
+            known_object_context = self._known_object_context(world, agent=agent)
             scene_kind = "direct chat" if participant_names == [agent.name] else "group chat"
             scene_context = build_scene_context(world, agent).to_prompt_dict()
+            scene_context_text = json.dumps(scene_context, ensure_ascii=False)[: self.performance.scene_context_chars]
             prompt = (
                 f"Sandbox {scene_kind} in scenario '{world.scenario_title}'. Setting: {world.setting_summary or 'No setting summary provided'}.\n"
                 f"The player says: {message}\n"
                 f"Participants: {group_text}.\n"
                 f"Known world objects/interactions: {known_object_context}.\n"
-                f"Scene context JSON: {json.dumps(scene_context, ensure_ascii=False)[:5000]}\n"
+                f"Scene context JSON: {scene_context_text}\n"
                 f"{grounding_prompt(world, agent)}\n"
                 f"{scene_proposal_prompt_contract()}\n"
                 f"You are {agent.name}. Reply as {agent.name}, in character, briefly but meaningfully. "
@@ -329,9 +343,14 @@ class MozokHttpClient:
             return self.fallback.chat(world, agent, message, participant_names)
 
     def interpret_speech(self, world: WorldState, agent: Agent, message: str) -> ParsedSpeech:
+        cache_key = self._semantic_cache_key(world, message)
+        if cache_key in self._semantic_cache:
+            cached = deepcopy(self._semantic_cache[cache_key])
+            self.last_status = f"MOZOK semantic cache: {agent.name}"
+            return cached
         try:
             object_kinds = "|".join(self._known_object_kinds(world))
-            known_object_context = self._known_object_context(world)
+            known_object_context = self._known_object_context(world, agent=agent)
             prompt = (
                 "You are a semantic parser for an agent simulation. Return ONLY valid compact JSON.\n"
                 "Do not roleplay. Do not answer the player. Extract meaning from the player's message.\n"
@@ -382,6 +401,7 @@ class MozokHttpClient:
             raw = str(data.get("response") or "").strip()
             parsed_json = self._extract_json(raw)
             parsed = parsed_speech_from_dict(message, parsed_json)
+            self._remember_semantic_parse(cache_key, parsed)
             self.last_status = f"MOZOK semantic parse OK: {agent.name} ({parsed.confidence:.2f})"
             return parsed
         except Exception as exc:
@@ -389,13 +409,16 @@ class MozokHttpClient:
             return self.fallback.interpret_speech(world, agent, message)
 
     def weave_social_scene(self, world: WorldState, speaker: Agent, listener: Agent, motive: dict[str, Any]) -> str:
+        if not self._should_weave_social_scene(world, speaker, listener, motive):
+            return ""
         try:
             scene_context = build_scene_context(world, speaker).to_prompt_dict()
+            scene_context_text = json.dumps(scene_context, ensure_ascii=False)[: self.performance.scene_context_chars]
             prompt = (
                 "You are a grounded scene weaver for an agent simulation. Return ONLY compact JSON matching the SceneProposal contract.\n"
                 f"Speaker: {speaker.name}. Listener: {listener.name}. Scenario: {world.scenario_title}.\n"
                 f"Motive: {json.dumps(motive, ensure_ascii=False)}\n"
-                f"Scene context: {json.dumps(scene_context, ensure_ascii=False)[:5000]}\n"
+                f"Scene context: {scene_context_text}\n"
                 f"{grounding_prompt(world, speaker)}\n"
                 f"{scene_proposal_prompt_contract()}\n"
                 "Write exactly one short in-character line from speaker to listener. No physical state changes unless requested_actions are legal."
@@ -441,14 +464,17 @@ class MozokHttpClient:
             return ""
 
     def voice_agent_decision(self, world: WorldState, agent: Agent, parsed: ParsedSpeech, decision: Any) -> str:
+        if not self._should_voice_decision(decision):
+            return ""
         try:
             scene_context = build_scene_context(world, agent).to_prompt_dict()
+            scene_context_text = json.dumps(scene_context, ensure_ascii=False)[: self.performance.scene_context_chars]
             prompt = (
                 "You are voicing a structured NPC decision. Return ONLY SceneProposal JSON.\n"
                 f"NPC: {agent.name}. Raw player message: {parsed.raw_text}\n"
                 f"Parsed speech summary: {parsed.summary}. Tone: {parsed.tone}. Confidence: {parsed.confidence:.2f}\n"
                 f"Decision: action={decision.action}, accepted={decision.accepted}, reason={decision.reason}, fallback_reply={decision.reply}\n"
-                f"Scene context: {json.dumps(scene_context, ensure_ascii=False)[:5000]}\n"
+                f"Scene context: {scene_context_text}\n"
                 f"{grounding_prompt(world, agent)}\n"
                 f"{scene_proposal_prompt_contract()}\n"
                 "Write one concise in-character reply that preserves the decision and does not invent physical props or facts."
@@ -498,6 +524,144 @@ class MozokHttpClient:
             return scene_proposal_from_dict(data, default_speaker_id=default_speaker_id)
         except Exception:
             return None
+
+    def _should_use_llm_tick(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> bool:
+        budget = self.performance.max_llm_ticks_per_turn
+        if budget <= 0:
+            return False
+        if world.turn not in self._llm_tick_counts:
+            self._llm_tick_counts = {world.turn: 0}
+        if self._llm_tick_counts.get(world.turn, 0) >= budget:
+            return False
+
+        critical = self._agent_has_critical_reason(world, agent, recent_events)
+        salient = critical or world.selected_agent_id == agent.id or agent.position.manhattan(world.player.position) <= 1
+        last_turn = self._last_llm_tick_turn.get(agent.id, -999)
+        if not critical and world.turn - last_turn < self.performance.llm_tick_cooldown_turns:
+            return False
+
+        if not critical:
+            agents = sorted((item for item in world.agents.values() if item.alive), key=lambda item: item.id)
+            if agents:
+                selected_agent = world.agents.get(world.selected_agent_id or "")
+                selected_is_relevant = bool(selected_agent and selected_agent.alive and selected_agent.position.manhattan(world.player.position) <= 2)
+                preferred_id = selected_agent.id if selected_is_relevant else agents[world.turn % len(agents)].id
+                if not salient:
+                    preferred_id = agents[world.turn % len(agents)].id
+                if preferred_id != agent.id:
+                    return False
+            elif not salient:
+                return False
+
+        self._llm_tick_counts[world.turn] = self._llm_tick_counts.get(world.turn, 0) + 1
+        self._last_llm_tick_turn[agent.id] = world.turn
+        return True
+
+    def _agent_has_critical_reason(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> bool:
+        if agent.active_commitment and agent.active_commitment.priority >= 75:
+            return True
+        urgent, value = agent.needs.most_urgent
+        if value >= 82 or agent.health < 55:
+            return True
+        if agent.social_to_player.fear + agent.social_to_player.resentment >= 125:
+            return True
+        salient_tags = {"danger", "mystery", "scarcity", "conflict", "social_risk", "hostile_alarm", "injury", "medical"}
+        for event in recent_events[-max(1, self.performance.recent_event_limit):]:
+            if event.salience >= 8 and (agent.id in event.witness_ids or event.actor_id == agent.id or event.target_id == agent.id):
+                return True
+            if salient_tags & set(event.tags) and (not event.witness_ids or agent.id in event.witness_ids or agent.position.manhattan(world.player.position) <= 2):
+                return True
+        return False
+
+    def _semantic_cache_key(self, world: WorldState, message: str) -> tuple[str, int, str, str]:
+        object_signature = ",".join(sorted(f"{obj.id}:{obj.kind}:{'|'.join(obj.aliases[:3])}" for obj in world.objects.values()))
+        return (self._world_id(world), world.turn, message.strip().lower(), object_signature)
+
+    def _remember_semantic_parse(self, cache_key: tuple[str, int, str, str], parsed: ParsedSpeech) -> None:
+        self._semantic_cache[cache_key] = deepcopy(parsed)
+        if len(self._semantic_cache) > 80:
+            self._semantic_cache = dict(list(self._semantic_cache.items())[-40:])
+
+    def _should_weave_social_scene(self, world: WorldState, speaker: Agent, listener: Agent, motive: dict[str, Any]) -> bool:
+        interval = self.performance.social_scene_llm_interval
+        if interval <= 0:
+            return False
+        key = f"{speaker.id}:{listener.id}:{motive.get('kind') or motive.get('impulse') or motive.get('id') or 'social'}"
+        last_turn = self._social_scene_turns.get(key, -999)
+        if world.turn - last_turn < interval:
+            return False
+        self._social_scene_turns[key] = world.turn
+        return True
+
+    def _should_voice_decision(self, decision: Any) -> bool:
+        policy = self.performance.decision_voice_policy
+        if policy in {"0", "off", "none", "never"}:
+            return False
+        if policy in {"1", "all", "always"}:
+            return True
+        action = str(getattr(decision, "action", "") or "")
+        accepted = bool(getattr(decision, "accepted", False))
+        return action in {"hostile_alarm", "refuse"} or (accepted and action in {"follow_player", "go_to_object"})
+
+    def _authoritative_state_context(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> dict[str, Any]:
+        if not self.performance.compact_payloads:
+            return world.export_authoritative_state()
+        nearby_agents = [
+            {
+                "id": other.id,
+                "name": other.name,
+                "position": asdict(other.position),
+                "distance": other.position.manhattan(agent.position),
+                "emotion": other.emotion,
+                "current_plan": other.current_plan,
+            }
+            for other in world.agents.values()
+            if other.alive and other.id != agent.id and other.position.manhattan(agent.position) <= 4
+        ]
+        return {
+            "turn": world.turn,
+            "scenario": {"id": world.scenario_id, "title": world.scenario_title, "themes": list(world.themes), "tone": dict(world.tone)},
+            "player": {
+                "position": asdict(world.player.position),
+                "inventory": list(world.player.inventory),
+                "health": world.player.health,
+                "hunger": world.player.hunger,
+                "thirst": world.player.thirst,
+                "fatigue": world.player.fatigue,
+                "distance": world.player.position.manhattan(agent.position),
+            },
+            "agent": {
+                "id": agent.id,
+                "name": agent.name,
+                "position": asdict(agent.position),
+                "health": agent.health,
+                "inventory": list(agent.inventory),
+                "status_flags": list(agent.status_flags),
+                "needs": asdict(agent.needs),
+                "social_to_player": asdict(agent.social_to_player),
+                "emotion": agent.emotion,
+                "current_goal": agent.current_goal,
+                "current_plan": agent.current_plan,
+                "active_commitment": asdict(agent.active_commitment) if agent.active_commitment else None,
+            },
+            "nearby_agents": nearby_agents[:6],
+            "objects": self._visible_object_records(world, agent=agent),
+            "pressure": dict(world.pressure),
+            "recent_events": [self._event_to_perception(event) for event in recent_events[-max(1, self.performance.recent_event_limit):]],
+        }
+
+    def _scene_context_payload(self, scene_context: Any) -> dict[str, Any]:
+        raw = scene_context.to_prompt_dict()
+        if not self.performance.compact_payloads:
+            return raw
+        limit = max(1, self.performance.known_object_limit)
+        compact = dict(raw)
+        compact["visible_objects"] = list(raw.get("visible_objects") or [])[:limit]
+        compact["legal_interactions"] = list(raw.get("legal_interactions") or [])[:limit]
+        compact["candidate_impulses"] = list(raw.get("candidate_impulses") or [])[:6]
+        compact["beliefs"] = list(raw.get("beliefs") or [])[-6:]
+        compact["hard_facts"] = list(raw.get("hard_facts") or [])[:8]
+        return compact
 
     def _model_hints(self, purpose: str, default_role: str) -> dict[str, str]:
         key = purpose.upper()
@@ -698,21 +862,41 @@ class MozokHttpClient:
             return world.find_object_with_tag("mystery") or world.find_object_with_tag("unknown")
         return world.find_object_with_tag("safety") or next(iter(world.objects.values()), None)
 
-    def _visible_object_records(self, world: WorldState) -> list[dict[str, Any]]:
+    def _ranked_objects_for_context(self, world: WorldState, agent: Agent | None = None) -> list[WorldObject]:
+        anchor = agent.position if agent else world.player.position
+        priority_tags = {"danger", "mystery", "food", "water", "shelter", "rest", "medical", "tool", "weapon", "social"}
+
+        def score(obj: WorldObject) -> tuple[int, int, str]:
+            distance = obj.position.manhattan(anchor)
+            nearby_player = obj.position.manhattan(world.player.position) <= 3
+            tag_bonus = len(priority_tags & set(obj.tags))
+            availability_bonus = 1 if world.is_object_available(obj) else 0
+            return (-(tag_bonus + availability_bonus + (1 if nearby_player else 0)), distance, obj.id)
+
+        objects = sorted(world.objects.values(), key=score)
+        if self.performance.compact_payloads:
+            return objects[: max(1, self.performance.known_object_limit)]
+        return objects
+
+    def _visible_object_records(self, world: WorldState, agent: Agent | None = None) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
-        for obj in world.objects.values():
+        anchor = agent.position if agent else world.player.position
+        for obj in self._ranked_objects_for_context(world, agent):
             records.append(
                 {
                     "id": obj.id,
                     "name": obj.name,
                     "kind": obj.kind,
+                    "distance": obj.position.manhattan(anchor),
                     "tags": list(obj.tags),
                     "aliases": list(obj.aliases),
+                    "state": dict(obj.state),
                     "interactions": [
                         {
                             "id": interaction_id,
                             "label": str((obj.interaction_defs.get(interaction_id) or {}).get("label") or interaction_id),
                             "primitive": str((obj.interaction_defs.get(interaction_id) or {}).get("primitive") or interaction_id),
+                            "affordance_tags": list((obj.interaction_defs.get(interaction_id) or {}).get("affordance_tags") or []),
                         }
                         for interaction_id in obj.interactions
                     ],
@@ -720,14 +904,16 @@ class MozokHttpClient:
             )
         return records
 
-    def _known_object_context(self, world: WorldState) -> str:
+    def _known_object_context(self, world: WorldState, agent: Agent | None = None) -> str:
         pieces = []
-        for obj in world.objects.values():
+        for obj in self._ranked_objects_for_context(world, agent):
             interactions = ",".join(obj.interactions[:5]) if obj.interactions else "none"
             tags = ",".join(obj.tags[:5])
             aliases = ",".join(obj.aliases[:5])
-            pieces.append(f"{obj.id} name={obj.name} kind={obj.kind} aliases=[{aliases}] tags=[{tags}] interactions=[{interactions}]")
-        return "; ".join(pieces)
+            distance = obj.position.manhattan(agent.position if agent else world.player.position)
+            pieces.append(f"{obj.id} name={obj.name} kind={obj.kind} dist={distance} aliases=[{aliases}] tags=[{tags}] interactions=[{interactions}]")
+        text = "; ".join(pieces)
+        return text[: self.performance.chat_context_chars] if self.performance.compact_payloads else text
 
     def _known_object_kinds(self, world: WorldState) -> list[str]:
         return sorted({obj.kind for obj in world.objects.values() if obj.kind})
@@ -735,7 +921,7 @@ class MozokHttpClient:
     def _attention_keywords(self, world: WorldState, urgent: str) -> list[str]:
         keywords = [urgent, *world.themes] if urgent else list(world.themes)
         keywords.extend([world.scenario_title, world.setting_summary])
-        for obj in world.objects.values():
+        for obj in self._ranked_objects_for_context(world):
             keywords.extend([obj.name, obj.kind, *obj.tags])
         deduped: list[str] = []
         for item in keywords:

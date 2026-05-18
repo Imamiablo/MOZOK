@@ -689,6 +689,89 @@ def test_game_model_settings_are_saved_and_used_by_mozok_client():
     assert client._model_hints("chat", "scene")["llm_model"] == "qwen-scene:latest"
 
 
+def test_mozok_client_limits_expensive_tick_calls_per_turn():
+    world = load_world(base_dir())
+    alice = world.agents["alice"]
+    boris = world.agents["boris"]
+    tick_calls: list[str] = []
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"selected_action": {"tool_name": "wait", "parameters": {}, "rationale": "test wait"}}
+
+    def fake_post(url, *args, **kwargs):
+        if "/agents/" in str(url):
+            tick_calls.append(str(url))
+        return Response()
+
+    old_post = client_module.requests.post
+    try:
+        client_module.requests.post = fake_post
+        client = MozokHttpClient("http://example.test")
+        client.performance.max_llm_ticks_per_turn = 1
+        client.performance.llm_tick_cooldown_turns = 0
+        first = client.decide(world, alice, world.event_log[-4:])
+        second = client.decide(world, boris, world.event_log[-4:])
+    finally:
+        client_module.requests.post = old_post
+
+    assert first.tool_name == "wait"
+    assert len(tick_calls) == 1
+    assert "budget" in second.rationale.lower()
+
+
+def test_semantic_parser_cache_reuses_group_message_parse():
+    world = load_world(base_dir())
+    alice = world.agents["alice"]
+    mira = world.agents["mira"]
+    chat_calls: list[str] = []
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "response": (
+                    '{"speech_acts":[{"type":"conversation","action":"none","target":"listener","confidence":0.8}],'
+                    '"claims":[],"emotional_tone":"neutral","summary":"cached parse","confidence":0.8}'
+                )
+            }
+
+    def fake_post(url, *args, **kwargs):
+        if str(url).endswith("/chat"):
+            chat_calls.append(str(url))
+        return Response()
+
+    old_post = client_module.requests.post
+    try:
+        client_module.requests.post = fake_post
+        client = MozokHttpClient("http://example.test")
+        first = client.interpret_speech(world, alice, "Stay close and listen.")
+        second = client.interpret_speech(world, mira, "Stay close and listen.")
+    finally:
+        client_module.requests.post = old_post
+
+    assert first.summary == "cached parse"
+    assert second.summary == "cached parse"
+    assert len(chat_calls) == 1
+
+
+def test_mozok_client_compacts_known_object_context():
+    world = load_world(base_dir())
+    client = MozokHttpClient("http://example.test")
+    client.performance.known_object_limit = 2
+    client.performance.compact_payloads = True
+
+    records = client._visible_object_records(world, agent=world.agents["alice"])
+
+    assert len(records) == 2
+    assert all("interactions" in record for record in records)
+
+
 def test_model_settings_preset_applies_groups_without_losing_manual_control():
     draft = {"chat": "large:latest", "semantic": "small:latest"}
 
