@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from mozok_game.engine.dialogue_reactions import apply_open_dialogue_reaction, finalise_dialogue_reaction, snapshot_player_relationship
 from mozok_game.engine.director import apply_dialogue_choice, build_dialogue_options
@@ -43,6 +44,7 @@ class PygameApp:
         self.model_settings = load_game_model_settings(base_dir)
         self.performance = load_performance_settings()
         self.model_settings_ui: dict | None = None
+        self.async_chat_jobs: list[dict[str, Any]] = []
         self.last_auto_chat_event_id: str = ""
         self.world.log("brain_mode", getattr(self.brain, "last_status", "Brain client ready"), source="game", salience=4, tags=["debug", "brain"])
         width = 1280
@@ -66,8 +68,11 @@ class PygameApp:
                     self._scroll_text_chat(event.y * 3)
                 elif event.type == self.pygame.KEYDOWN:
                     running = self._handle_key(event.key)
+            self._poll_async_jobs()
             self.renderer.draw(self.world, self.dialogue_menu, self.text_chat, self.agent_dossier, self.object_menu, self.model_settings_ui)
             self.clock.tick(30)
+        if hasattr(self.brain, "shutdown"):
+            self.brain.shutdown()
         self.pygame.quit()
 
     def _handle_key(self, key: int) -> bool:
@@ -354,6 +359,29 @@ class PygameApp:
             tags=["dialogue", "player", chat_tag],
             metadata={"target_agent_ids": target_ids},
         )
+        submit_chat = getattr(self.brain, "submit_chat_response", None)
+        if submit_chat:
+            for agent in agents:
+                before_social = snapshot_player_relationship(agent)
+                use_llm_reply = is_direct or llm_reply_budget > 0
+                use_voice = is_direct or use_llm_reply
+                if use_llm_reply and not is_direct:
+                    llm_reply_budget = max(0, llm_reply_budget - 1)
+                placeholder = self.world.chat(agent.id, agent.name, "…", source="agent_pending", audience_ids=target_ids)
+                future = submit_chat(self.world, agent.id, text, participant_names, use_llm_reply=use_llm_reply, use_voice=use_voice)
+                self.async_chat_jobs.append(
+                    {
+                        "future": future,
+                        "agent_id": agent.id,
+                        "target_ids": list(target_ids),
+                        "participant_names": list(participant_names),
+                        "chat_tag": chat_tag,
+                        "before_social": before_social,
+                        "placeholder": placeholder,
+                    }
+                )
+            self._append_chat_effect(f"Queued {len(agents)} response(s); you can keep moving.")
+            return
         for agent in agents:
             before_social = snapshot_player_relationship(agent)
             parsed = self.brain.interpret_speech(self.world, agent, text)
@@ -400,6 +428,79 @@ class PygameApp:
                     tags=["dialogue", "agent", chat_tag],
                     metadata={"agent_id": agent.id, "participants": participant_names},
                 )
+
+    def _poll_async_jobs(self) -> None:
+        for job in list(self.async_chat_jobs):
+            future = job["future"]
+            if not future.done():
+                continue
+            self.async_chat_jobs.remove(job)
+            try:
+                result = future.result()
+            except Exception as exc:
+                self._finish_failed_async_chat(job, exc)
+                continue
+            self._apply_async_chat_result(job, result)
+
+    def _finish_failed_async_chat(self, job: dict[str, Any], exc: Exception) -> None:
+        agent = self.world.agents.get(str(job.get("agent_id") or ""))
+        placeholder = job.get("placeholder")
+        message = f"(could not reach the model: {type(exc).__name__})"
+        if placeholder:
+            placeholder.content = message
+            placeholder.source = "agent"
+        elif agent:
+            self.world.chat(agent.id, agent.name, message, source="agent", audience_ids=list(job.get("target_ids") or []))
+        if agent:
+            agent.brain_risk = f"Async LLM failed: {type(exc).__name__}: {str(exc)[:90]}"
+            self.world.log("async_chat_failed", f"{agent.name}'s queued model reply failed: {type(exc).__name__}.", source=agent.id, tags=["dialogue", "llm", "async"])
+
+    def _apply_async_chat_result(self, job: dict[str, Any], result: dict[str, Any]) -> None:
+        agent = self.world.agents.get(str(job.get("agent_id") or result.get("agent_id") or ""))
+        if not agent:
+            return
+        parsed = result["parsed"]
+        decision = result["decision"]
+        reply = str(result.get("reply") or "").strip()
+        target_ids = list(job.get("target_ids") or [])
+        participant_names = list(job.get("participant_names") or [])
+        chat_tag = str(job.get("chat_tag") or "direct_chat")
+        record_player_claims(self.world, agent, parsed)
+        if decision.handled:
+            apply_agent_decision(self.world, agent, parsed, decision)
+            reply = decision.reply or reply
+        else:
+            apply_open_dialogue_reaction(self.world, agent, parsed)
+        reaction = finalise_dialogue_reaction(self.world, agent, dict(job.get("before_social") or {}), parsed, decision if decision.handled else None)
+        self._append_chat_effect(reaction.summary)
+        clean = reply.strip() or "I need a moment."
+        if clean.lower().startswith(f"{agent.name.lower()}:"):
+            clean = clean.split(":", 1)[1].strip()
+        validation = validate_agent_dialogue(self.world, agent, clean)
+        if validation.changed:
+            agent.brain_risk = "Grounded dialogue rewrite: " + "; ".join(validation.rejected_physical_claims[:2])
+        clean = validation.text
+        agent.last_dialogue = f"{agent.name}: {clean}"
+        agent.last_player_contact_turn = self.world.turn
+        if decision.action != "hostile_alarm" and not agent.following_player and not agent.command_target_object_id:
+            agent.command_hold_turns = max(agent.command_hold_turns, 3)
+            agent.command_reason = "staying after player conversation"
+        placeholder = job.get("placeholder")
+        if placeholder:
+            placeholder.content = clean
+            placeholder.source = "agent"
+        else:
+            self.world.chat(agent.id, agent.name, clean, source="agent", audience_ids=target_ids)
+        self.world.last_message = f"{agent.name}: {clean}"
+        if not decision.handled:
+            self.world.log(
+                "agent_chat_response",
+                f"{agent.name}: {clean}",
+                source=agent.id,
+                salience=7,
+                tags=["dialogue", "agent", chat_tag, "async"],
+                metadata={"agent_id": agent.id, "participants": participant_names},
+            )
 
     def _local_chat_fallback(self, agent, text: str, participant_names: list[str]) -> str:
         fallback = getattr(self.brain, "fallback", None)

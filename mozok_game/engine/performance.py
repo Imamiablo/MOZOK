@@ -10,6 +10,10 @@ class GamePerformanceSettings:
     llm_tick_cooldown_turns: int = 2
     max_group_chat_llm_replies: int = 1
     social_scene_llm_interval: int = 4
+    async_llm_enabled: bool = True
+    async_workers: int = 1
+    async_pending_limit: int = 8
+    async_decision_ttl_turns: int = 4
     compact_payloads: bool = True
     decision_voice_policy: str = "important"
     recent_event_limit: int = 4
@@ -24,6 +28,10 @@ def load_performance_settings() -> GamePerformanceSettings:
         llm_tick_cooldown_turns=_int_env("MOZOK_GAME_LLM_TICK_COOLDOWN_TURNS", 2),
         max_group_chat_llm_replies=_int_env("MOZOK_GAME_MAX_GROUP_CHAT_LLM_REPLIES", 1),
         social_scene_llm_interval=_int_env("MOZOK_GAME_SOCIAL_SCENE_LLM_INTERVAL", 4),
+        async_llm_enabled=_bool_env("MOZOK_GAME_ASYNC_LLM", True),
+        async_workers=max(1, _int_env("MOZOK_GAME_ASYNC_WORKERS", 1)),
+        async_pending_limit=_int_env("MOZOK_GAME_ASYNC_PENDING_LIMIT", 8),
+        async_decision_ttl_turns=_int_env("MOZOK_GAME_ASYNC_DECISION_TTL_TURNS", 4),
         compact_payloads=_bool_env("MOZOK_GAME_COMPACT_PAYLOADS", True),
         decision_voice_policy=os.getenv("MOZOK_GAME_DECISION_VOICE_POLICY", "important").strip().lower() or "important",
         recent_event_limit=_int_env("MOZOK_GAME_RECENT_EVENT_LIMIT", 4),

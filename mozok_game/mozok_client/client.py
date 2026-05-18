@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from copy import deepcopy
@@ -111,8 +112,8 @@ class MozokHttpClient:
         self.model_settings = load_game_model_settings(self.base_dir)
         self.performance = load_performance_settings()
 
-    def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
-        if not self._should_use_llm_tick(world, agent, recent_events):
+    def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent], force_api: bool = False) -> AgentIntent:
+        if not force_api and not self._should_use_llm_tick(world, agent, recent_events):
             self.last_status = f"MOZOK API budget: local planner for {agent.name}"
             return self._fallback(world, agent, recent_events)
         try:
@@ -983,8 +984,141 @@ class MozokHttpClient:
         return parsed
 
 
+class AsyncMozokBrain:
+    """Non-blocking wrapper around the HTTP bridge.
+
+    The game keeps using cheap local behaviour immediately, while LLM decisions
+    and chat replies are computed in a small background queue and applied later
+    on the pygame thread.
+    """
+
+    mode_name = "mozok-api-async"
+
+    def __init__(self, inner: MozokHttpClient) -> None:
+        self.inner = inner
+        self.fallback = inner.fallback
+        self.performance = inner.performance
+        self.executor = ThreadPoolExecutor(max_workers=max(1, self.performance.async_workers), thread_name_prefix="mozok-llm")
+        self._pending_decisions: dict[str, tuple[int, Future]] = {}
+        self._ready_decisions: dict[str, tuple[int, AgentIntent]] = {}
+        self.last_status = f"MOZOK API async mode enabled: {inner.base_url}"
+
+    def reload_model_settings(self) -> None:
+        self.inner.reload_model_settings()
+        self.performance = self.inner.performance
+
+    def decide(self, world: WorldState, agent: Agent, recent_events: list[WorldEvent]) -> AgentIntent:
+        self._harvest_decisions()
+        ready = self._ready_decisions.pop(agent.id, None)
+        if ready:
+            submitted_turn, intent = ready
+            if world.turn - submitted_turn <= self.performance.async_decision_ttl_turns:
+                self.last_status = f"MOZOK async ready: {agent.name} -> {intent.tool_name}"
+                return intent
+
+        if agent.id not in self._pending_decisions and len(self._pending_decisions) < self.performance.async_pending_limit:
+            if self.inner._should_use_llm_tick(world, agent, recent_events):
+                snapshot = deepcopy(world)
+                snapshot_agent = snapshot.agents.get(agent.id)
+                snapshot_recent = list(snapshot.event_log[-max(1, self.performance.recent_event_limit):])
+                if snapshot_agent:
+                    self._pending_decisions[agent.id] = (
+                        world.turn,
+                        self.executor.submit(
+                            self.inner.decide,
+                            snapshot,
+                            snapshot_agent,
+                            snapshot_recent,
+                            True,
+                        ),
+                    )
+                    agent.brain_focus = "LLM thinking in background"
+                    agent.brain_broadcast = "Using local behaviour now; a grounded MOZOK action is queued."
+
+        self.last_status = f"MOZOK async: local planner for {agent.name}"
+        intent = self.fallback.decide(world, agent, recent_events)
+        intent.rationale = f"{self.last_status}; {intent.rationale}"
+        return intent
+
+    def chat(self, world: WorldState, agent: Agent, message: str, participant_names: list[str]) -> str:
+        self.last_status = f"MOZOK async chat fallback: queued responses should use submit_chat_response"
+        return self.fallback.chat(world, agent, message, participant_names)
+
+    def interpret_speech(self, world: WorldState, agent: Agent, message: str) -> ParsedSpeech:
+        self.last_status = f"MOZOK async semantic fallback: queued responses should use submit_chat_response"
+        return self.fallback.interpret_speech(world, agent, message)
+
+    def weave_social_scene(self, world: WorldState, speaker: Agent, listener: Agent, motive: dict[str, Any]) -> str:
+        return ""
+
+    def voice_agent_decision(self, world: WorldState, agent: Agent, parsed: ParsedSpeech, decision: Any) -> str:
+        return ""
+
+    def submit_chat_response(
+        self,
+        world: WorldState,
+        agent_id: str,
+        message: str,
+        participant_names: list[str],
+        use_llm_reply: bool = True,
+        use_voice: bool = True,
+    ) -> Future:
+        snapshot = deepcopy(world)
+        return self.executor.submit(self._chat_response_worker, snapshot, agent_id, message, participant_names, use_llm_reply, use_voice)
+
+    def _chat_response_worker(
+        self,
+        world: WorldState,
+        agent_id: str,
+        message: str,
+        participant_names: list[str],
+        use_llm_reply: bool,
+        use_voice: bool,
+    ) -> dict[str, Any]:
+        from mozok_game.engine.speech_actions import decide_agent_response
+
+        agent = world.agents[agent_id]
+        parsed = self.inner.interpret_speech(world, agent, message)
+        decision = decide_agent_response(world, agent, parsed)
+        if decision.handled:
+            reply = decision.reply
+            if use_voice:
+                voiced = str(self.inner.voice_agent_decision(world, agent, parsed, decision) or "").strip()
+                if voiced:
+                    decision.reply = voiced
+                    reply = voiced
+            return {"agent_id": agent_id, "parsed": parsed, "decision": decision, "reply": reply}
+        if use_llm_reply:
+            reply = self.inner.chat(world, agent, message, participant_names)
+        else:
+            reply = self.fallback.chat(world, agent, message, participant_names)
+        return {"agent_id": agent_id, "parsed": parsed, "decision": decision, "reply": reply}
+
+    def _harvest_decisions(self) -> None:
+        for agent_id, (submitted_turn, future) in list(self._pending_decisions.items()):
+            if not future.done():
+                continue
+            self._pending_decisions.pop(agent_id, None)
+            try:
+                intent = future.result()
+            except Exception as exc:
+                self.last_status = f"MOZOK async decision dropped: {type(exc).__name__}: {str(exc)[:120]}"
+                continue
+            self._ready_decisions[agent_id] = (submitted_turn, intent)
+
+    def pending_count(self) -> int:
+        self._harvest_decisions()
+        return len(self._pending_decisions)
+
+    def shutdown(self) -> None:
+        self.executor.shutdown(wait=False, cancel_futures=True)
+
+
 def build_brain_client(base_dir: Path | None = None) -> BrainClient:
     # Default remains offline so the prototype always runs. Set MOZOK_GAME_USE_API=1 to force API mode.
     if os.getenv("MOZOK_GAME_USE_API", "0") == "1":
-        return MozokHttpClient(base_dir=base_dir)
+        client = MozokHttpClient(base_dir=base_dir)
+        if client.performance.async_llm_enabled:
+            return AsyncMozokBrain(client)
+        return client
     return OfflineMozokBrain()

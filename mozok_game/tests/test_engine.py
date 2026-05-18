@@ -1,5 +1,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import time
 
 from mozok_game.engine.appraisal import appraise_agent_beliefs
 from mozok_game.engine.affordances import build_agent_affordances
@@ -9,7 +10,7 @@ from mozok_game.engine.editor_service import add_object_instance, create_scenari
 from mozok_game.engine.interactions import interact_with_object
 from mozok_game.engine.inventory import item_capabilities, transfer_item
 from mozok_game.engine.model_settings import GameModelSettings, apply_model_preset, load_game_model_settings, save_game_model_settings
-from mozok_game.engine.models import Position, WorldObject
+from mozok_game.engine.models import AgentIntent, Position, WorldObject
 from mozok_game.engine.object_effects import execute_object_interaction
 from mozok_game.engine.pack_validation import list_object_templates, spawn_object_instance, validate_appraisal_pack, validate_scenario_pack
 from mozok_game.engine.pathfinding import next_step_towards
@@ -21,7 +22,7 @@ from mozok_game.engine.speech_actions import OBJECT_ALIASES, parsed_speech_from_
 from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import load_world, load_world_from_path
 from mozok_game.mozok_client import client as client_module
-from mozok_game.mozok_client.client import MozokHttpClient
+from mozok_game.mozok_client.client import AsyncMozokBrain, MozokHttpClient
 from mozok_game.mozok_client.client import OfflineMozokBrain
 from mozok_game.ui.renderer import OBJECT_COLOURS, TILE_COLOURS
 
@@ -770,6 +771,55 @@ def test_mozok_client_compacts_known_object_context():
 
     assert len(records) == 2
     assert all("interactions" in record for record in records)
+
+
+def test_async_brain_returns_local_intent_then_ready_llm_intent():
+    world = load_world(base_dir())
+    alice = world.agents["alice"]
+    client = MozokHttpClient("http://example.test")
+    client._should_use_llm_tick = lambda *args, **kwargs: True
+
+    def fake_decide(world_snapshot, agent_snapshot, recent_snapshot, force_api=False):
+        time.sleep(0.02)
+        return AgentIntent(
+            agent_id=agent_snapshot.id,
+            action_kind="no_op",
+            tool_name="wait",
+            parameters={},
+            rationale="MOZOK API: async ready",
+        )
+
+    client.decide = fake_decide
+    brain = AsyncMozokBrain(client)
+
+    first = brain.decide(world, alice, world.event_log[-4:])
+    for _ in range(20):
+        if brain.pending_count() == 0:
+            break
+        time.sleep(0.01)
+    second = brain.decide(world, alice, world.event_log[-4:])
+
+    assert "local planner" in first.rationale.lower()
+    assert second.rationale == "MOZOK API: async ready"
+
+
+def test_async_chat_response_future_returns_model_reply():
+    world = load_world(base_dir())
+    client = MozokHttpClient("http://example.test")
+
+    def fake_interpret(world_snapshot, agent_snapshot, message):
+        return parsed_speech_from_dict(message, {"speech_acts": [{"type": "conversation", "action": "none", "confidence": 0.8}], "confidence": 0.8})
+
+    client.interpret_speech = fake_interpret
+    client.chat = lambda world_snapshot, agent_snapshot, message, names: "model reply"
+    brain = AsyncMozokBrain(client)
+
+    future = brain.submit_chat_response(world, "alice", "hello", ["Alice"], use_llm_reply=True, use_voice=False)
+    result = future.result(timeout=1.0)
+
+    assert result["agent_id"] == "alice"
+    assert result["reply"] == "model reply"
+    assert not result["decision"].handled
 
 
 def test_model_settings_preset_applies_groups_without_losing_manual_control():
