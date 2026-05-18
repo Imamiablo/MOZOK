@@ -118,6 +118,7 @@ class Agent:
     action_biases: dict[str, float] = field(default_factory=dict)
     needs: Needs = field(default_factory=Needs)
     social_to_player: SocialState = field(default_factory=SocialState)
+    relationships: dict[str, SocialState] = field(default_factory=dict)
     emotion: Emotion = "neutral"
     emotion_intensity: float = 0.2
     health: float = 100.0

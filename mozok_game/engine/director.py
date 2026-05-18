@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from mozok_game.engine.models import Agent
+from mozok_game.engine.relationships import apply_relationship_delta
 from mozok_game.engine.scene_validation import validate_agent_dialogue
 from mozok_game.engine.world_state import WorldState
 
@@ -356,6 +357,8 @@ def run_social_director(world: WorldState, scene_weaver=None) -> None:
     speaker.last_dialogue = f"{speaker.name}: {line}"
     world.last_agent_conversation_turn = world.turn
     world.chat(speaker.id, speaker.name, line, source="agent", audience_ids=[listener.id])
+    apply_relationship_delta(speaker, listener.id, {"trust": 0.2, "affinity": 0.6})
+    apply_relationship_delta(listener, speaker.id, {"affinity": 0.4})
     world.log(
         "agent_agent_dialogue",
         f"{speaker.name} to {listener.name}: {line}",

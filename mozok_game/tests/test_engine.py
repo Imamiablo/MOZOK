@@ -4,18 +4,20 @@ from tempfile import TemporaryDirectory
 from mozok_game.engine.appraisal import appraise_agent_beliefs
 from mozok_game.engine.affordances import build_agent_affordances
 from mozok_game.engine.capabilities import execute_item_action
+from mozok_game.engine.dialogue_reactions import apply_open_dialogue_reaction, finalise_dialogue_reaction, snapshot_player_relationship
 from mozok_game.engine.editor_service import add_object_instance, create_scenario, duplicate_scenario, edit_character_override, move_object_instance, remove_object_instance
 from mozok_game.engine.interactions import interact_with_object
 from mozok_game.engine.inventory import item_capabilities, transfer_item
-from mozok_game.engine.model_settings import GameModelSettings, load_game_model_settings, save_game_model_settings
+from mozok_game.engine.model_settings import GameModelSettings, apply_model_preset, load_game_model_settings, save_game_model_settings
 from mozok_game.engine.models import Position, WorldObject
 from mozok_game.engine.object_effects import execute_object_interaction
 from mozok_game.engine.pack_validation import list_object_templates, spawn_object_instance, validate_appraisal_pack, validate_scenario_pack
 from mozok_game.engine.pathfinding import next_step_towards
+from mozok_game.engine.relationships import apply_relationship_delta, social_state_for
 from mozok_game.engine.scene_context import build_scene_context
 from mozok_game.engine.scene_proposal import scene_proposal_from_dict, validate_scene_proposal
 from mozok_game.engine.scene_validation import build_scene_grounding, validate_agent_dialogue
-from mozok_game.engine.speech_actions import OBJECT_ALIASES
+from mozok_game.engine.speech_actions import OBJECT_ALIASES, parsed_speech_from_dict
 from mozok_game.engine.tick_scheduler import apply_agent_intent, run_agent_ticks
 from mozok_game.engine.world_state import load_world, load_world_from_path
 from mozok_game.mozok_client import client as client_module
@@ -194,6 +196,25 @@ def test_player_can_pick_up_item_and_open_lockbox_with_tool():
     assert "rope" in world.player.inventory
     assert box.state["open"]
     assert world.event_log[-1].event_type == "item_action_pry"
+    assert world.chat_log[-1].speaker_name == "Action"
+    assert "Inside: a ration and rope" in world.chat_log[-1].content
+
+
+def test_object_inspection_feedback_reflects_state_after_pry():
+    world = load_world(base_dir())
+    knife = world.objects["knife_01"]
+    box = world.objects["lockbox_01"]
+
+    interact_with_object(world, box, "inspect")
+    before = world.chat_log[-1].content
+    interact_with_object(world, knife, "take")
+    world.player.position = Position(box.position.x, box.position.y - 1)
+    interact_with_object(world, box, "open")
+    interact_with_object(world, box, "inspect")
+    after = world.chat_log[-1].content
+
+    assert "still locked" in before
+    assert "open now" in after
 
 
 def test_item_capability_can_anchor_rope_at_cave():
@@ -664,5 +685,47 @@ def test_game_model_settings_are_saved_and_used_by_mozok_client():
         loaded = load_game_model_settings(root)
         client = MozokHttpClient("http://example.test", base_dir=root)
 
-        assert loaded.model_for_role("scene") == "qwen-scene:latest"
-        assert client._model_hints("chat", "scene")["llm_model"] == "qwen-scene:latest"
+    assert loaded.model_for_role("scene") == "qwen-scene:latest"
+    assert client._model_hints("chat", "scene")["llm_model"] == "qwen-scene:latest"
+
+
+def test_model_settings_preset_applies_groups_without_losing_manual_control():
+    draft = {"chat": "large:latest", "semantic": "small:latest"}
+
+    powerful = apply_model_preset(draft, "reasoner:latest", "powerful")
+    helper = apply_model_preset(powerful, "helper:latest", "helper")
+
+    assert powerful["chat"] == "reasoner:latest"
+    assert powerful["scene"] == "reasoner:latest"
+    assert powerful["reasoning"] == "reasoner:latest"
+    assert helper["semantic"] == "helper:latest"
+    assert helper["fast"] == "helper:latest"
+    assert helper["chat"] == "reasoner:latest"
+
+
+def test_open_dialogue_reaction_updates_emotion_and_social_feedback():
+    world = load_world(base_dir())
+    mira = world.agents["mira"]
+    before = snapshot_player_relationship(mira)
+    parsed = parsed_speech_from_dict("Thank you for helping me.", {"tone": "friendly", "confidence": 0.8})
+
+    apply_open_dialogue_reaction(world, mira, parsed)
+    reaction = finalise_dialogue_reaction(world, mira, before, parsed)
+
+    assert reaction.delta["trust"] > 0
+    assert reaction.delta["affinity"] > 0
+    assert mira.emotion == "happy"
+    assert "trust" in reaction.summary
+
+
+def test_relationship_matrix_tracks_agent_to_agent_state():
+    world = load_world(base_dir())
+    alice = world.agents["alice"]
+    boris = world.agents["boris"]
+
+    apply_relationship_delta(alice, boris.id, {"trust": -6, "resentment": 4})
+    social = social_state_for(alice, boris.id)
+
+    assert social.trust == 44
+    assert social.resentment == 9
+    assert social_state_for(alice, "player") is alice.social_to_player

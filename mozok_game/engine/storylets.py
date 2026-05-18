@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from mozok_game.engine.models import Agent, Commitment, Position, WorldObject
+from mozok_game.engine.relationships import apply_relationship_delta
 from mozok_game.engine.world_state import WorldState
 
 
@@ -350,12 +351,8 @@ def _apply_effect(world: WorldState, storylet: StoryletSpec, effect: dict[str, A
     if effect_type == "agent_relationship_delta":
         agent = _select_agent(world, effect.get("select_agent"))
         target = str(effect.get("target") or effect.get("target_agent_id") or "player")
-        if agent and target == "player":
-            for key, amount in dict(effect.get("delta") or {}).items():
-                if hasattr(agent.social_to_player, str(key)):
-                    setattr(agent.social_to_player, str(key), float(getattr(agent.social_to_player, str(key))) + float(amount))
-            agent.social_to_player.clamp()
-        elif agent:
+        if agent:
+            apply_relationship_delta(agent, target, {str(key): float(amount) for key, amount in dict(effect.get("delta") or {}).items()})
             world.log(
                 "relationship_delta",
                 f"{agent.name}'s relationship pressure changed toward {target}.",

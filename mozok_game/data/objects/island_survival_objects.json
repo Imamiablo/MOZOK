@@ -778,6 +778,12 @@
           "primitive": "inspect",
           "event_type": "object_inspected",
           "message": "{actor} studies {target}. It was meant to keep supplies under someone's control.",
+          "message_by_state": {
+            "open": {
+              "true": "{actor} checks {target}. It is open now; the useful contents have been taken.",
+              "false": "{actor} studies {target}. It is still locked. A sharp tool could probably pry it open."
+            }
+          },
           "tags": [
             "inspect",
             "locked",

@@ -8,6 +8,7 @@ from typing import Any
 from mozok_game.engine.map_grid import MapGrid
 from mozok_game.engine.models import Agent, AgentBelief, BrainFlash, ChatLine, ClaimRecord, Needs, Player, Position, SocialState, WorldEvent, WorldObject
 from mozok_game.engine.pressure import apply_event_pressure, default_pressure_field
+from mozok_game.engine.relationships import initialise_world_relationships
 
 
 @dataclass
@@ -279,6 +280,21 @@ class WorldState:
                         "social": agent.needs.social,
                         "curiosity": agent.needs.curiosity,
                     },
+                    "social_to_player": {
+                        "trust": agent.social_to_player.trust,
+                        "fear": agent.social_to_player.fear,
+                        "affinity": agent.social_to_player.affinity,
+                        "resentment": agent.social_to_player.resentment,
+                    },
+                    "relationships": {
+                        target_id: {
+                            "trust": social.trust,
+                            "fear": social.fear,
+                            "affinity": social.affinity,
+                            "resentment": social.resentment,
+                        }
+                        for target_id, social in agent.relationships.items()
+                    },
                     "active_commitment": asdict(agent.active_commitment) if agent.active_commitment else None,
                 }
                 for agent_id, agent in self.agents.items()
@@ -325,6 +341,16 @@ def _pos(raw: list[int] | tuple[int, int]) -> Position:
     return Position(int(raw[0]), int(raw[1]))
 
 
+def _relationships_from_dict(raw: Any) -> dict[str, SocialState]:
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, SocialState] = {}
+    for target_id, data in raw.items():
+        if isinstance(data, dict):
+            result[str(target_id)] = SocialState(**{key: value for key, value in data.items() if key in {"trust", "fear", "affinity", "resentment"}})
+    return result
+
+
 def load_world(base_dir: Path, scenario_id: str = "island_camp_demo") -> WorldState:
     return load_world_from_path(base_dir, base_dir / "data" / "scenarios" / f"{scenario_id}.json")
 
@@ -363,6 +389,7 @@ def load_world_from_path(base_dir: Path, scenario_path: Path) -> WorldState:
             action_biases={key: float(value) for key, value in dict(merged.get("action_biases", {})).items()},
             needs=Needs(**merged.get("needs", {})),
             social_to_player=SocialState(**merged.get("social_to_player", {})),
+            relationships=_relationships_from_dict(merged.get("relationships")),
             emotion=merged.get("emotion", "neutral"),
             health=float(merged.get("health", 100.0)),
             status_flags=list(merged.get("status_flags", [])),
@@ -408,6 +435,7 @@ def load_world_from_path(base_dir: Path, scenario_path: Path) -> WorldState:
     )
     for event in data.get("opening_events", []):
         world.log(event.get("event_type", "opening"), event["content"], source="scenario", salience=event.get("salience", 7), tags=event.get("tags", []))
+    initialise_world_relationships(world)
     return world
 
 

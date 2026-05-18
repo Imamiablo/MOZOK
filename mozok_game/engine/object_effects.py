@@ -48,7 +48,7 @@ def execute_object_interaction(world: WorldState, actor_id: str, obj: WorldObjec
             from mozok_game.engine.director import trigger_scripted_moment
 
             trigger_scripted_moment(world, str(moment_id))
-    message = _format_text(str(spec.get("message") or "{actor} uses {target}."), world, actor_id, obj)
+    message = _format_text(_message_template_for(obj, spec, "{actor} uses {target}."), world, actor_id, obj)
     result = InteractionResult(
         True,
         message,
@@ -296,6 +296,23 @@ def _format_text(template: str, world: WorldState, actor_id: str, obj: WorldObje
     for key, value in obj.state.items():
         context[f"state_{key}"] = value
     return template.format(**context)
+
+
+def _message_template_for(obj: WorldObject, spec: dict[str, Any], fallback: str) -> str:
+    conditional = spec.get("message_by_state") or spec.get("messages_by_state")
+    if isinstance(conditional, dict):
+        for state_key, templates in conditional.items():
+            value = obj.state.get(str(state_key))
+            if isinstance(templates, dict):
+                if str(value) in templates:
+                    return str(templates[str(value)])
+                if bool(value) and "true" in templates:
+                    return str(templates["true"])
+                if not bool(value) and "false" in templates:
+                    return str(templates["false"])
+            elif bool(value):
+                return str(templates)
+    return str(spec.get("message") or fallback)
 
 
 def _format_value(value: Any, world: WorldState, actor_id: str, obj: WorldObject, item_id: str = "") -> Any:

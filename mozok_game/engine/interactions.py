@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from mozok_game.engine.object_effects import execute_object_interaction
+from mozok_game.engine.object_effects import InteractionResult, execute_object_interaction
 from mozok_game.engine.models import Agent, WorldObject
 from mozok_game.engine.world_state import WorldState
 
 
-def interact_with_object(world: WorldState, obj: WorldObject, interaction_id: str = "") -> None:
-    execute_object_interaction(world, "player", obj, interaction_id, reason="player interact")
+def interact_with_object(world: WorldState, obj: WorldObject, interaction_id: str = "") -> InteractionResult:
+    result = execute_object_interaction(world, "player", obj, interaction_id, reason="player interact")
+    world.chat("system", "Action", result.message, source="system")
+    return result
 
 
 def talk_to_agent(world: WorldState, agent: Agent) -> None:

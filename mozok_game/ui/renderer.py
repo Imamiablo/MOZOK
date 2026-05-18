@@ -8,6 +8,7 @@ from mozok_game.engine.inventory import inventory_label, item_capabilities, item
 from mozok_game.engine.model_settings import MODEL_ROLES
 from mozok_game.engine.models import Agent, Position, WorldObject
 from mozok_game.engine.pressure import pressure_summary
+from mozok_game.engine.relationships import social_state_for
 from mozok_game.engine.world_state import WorldState
 from mozok_game.ui.art_assets import ArtAssets
 
@@ -89,7 +90,7 @@ class Renderer:
         self.label = pygame.font.SysFont("georgia", 18, bold=True)
         self.mono = pygame.font.SysFont("consolas", 13)
         self.debug = False
-        self.bottom_tabs = ["conversation", "inventory", "agent", "memory"]
+        self.bottom_tabs = ["conversation", "inventory", "relations", "agent", "memory"]
         self.bottom_tab = "conversation"
         self.avatar_cache: dict[tuple[str, str], Any] = {}
 
@@ -661,6 +662,8 @@ class Renderer:
         content = self.pygame.Rect(rect.x + 20, rect.y + 62, rect.w - 40, rect.h - 82)
         if self.bottom_tab == "inventory":
             self._draw_inventory_tab(world, content)
+        elif self.bottom_tab == "relations":
+            self._draw_relations_tab(world, content)
         elif self.bottom_tab == "agent":
             self._draw_agent_focus_tab(world, content)
         elif self.bottom_tab == "memory":
@@ -670,25 +673,26 @@ class Renderer:
         self._line(rect.right - 176, rect.bottom - 24, "Tab switch panel", (238, 214, 161), self.tiny)
 
     def _draw_bottom_tabs(self, rect: Any) -> None:
-        labels = [("conversation", "Conversation"), ("inventory", "Inventory"), ("agent", "Agent"), ("memory", "Memory")]
-        x = rect.x + 188
+        labels = [("conversation", "Conversation"), ("inventory", "Inventory"), ("relations", "Relations"), ("agent", "Agent"), ("memory", "Memory")]
+        x = rect.x + 154
         y = rect.y + 12
         for tab_id, label in labels:
-            tab = self.pygame.Rect(x, y, 116, 25)
+            tab = self.pygame.Rect(x, y, 108, 25)
             active = tab_id == self.bottom_tab
             self.pygame.draw.rect(self.screen, PAPER if active else (37, 52, 43), tab, border_radius=3)
             self.pygame.draw.rect(self.screen, GOLD_DARK if active else GOLD, tab, width=1, border_radius=3)
             self._centered(tab, label, INK if active else PAPER, self.tiny)
-            x += 122
+            x += 114
 
     def _draw_conversation_tab(self, world: WorldState, rect: Any) -> None:
         self._line(rect.x, rect.y, "Conversation", PAPER, self.label)
+        self._line(rect.x + 170, rect.y + 2, ("Latest: " + world.last_message)[:96], (238, 214, 161), self.tiny)
         y = rect.y + 28
-        chat_lines = world.chat_log[-4:] if world.chat_log else []
+        chat_lines = world.chat_log[-5:] if world.chat_log else []
         if chat_lines:
             for item in chat_lines:
                 name = f"{item.speaker_name}:"
-                colour = (255, 241, 166) if item.source == "player" else (174, 220, 238)
+                colour = self._speaker_colour(item.source)
                 self._line(rect.x, y, name[:13], colour, self.small)
                 for line in self._wrap(item.content, 100, 2):
                     self._line(rect.x + 92, y, line, (240, 238, 220), self.small)
@@ -746,6 +750,40 @@ class Renderer:
             interactions = ", ".join(obj.interactions[:4]) if obj.interactions else "no direct interaction"
             self._line(rect.x + 310, y, f"{obj.name}: {interactions}"[:76], (240, 238, 220), self.small)
             y += 21
+
+    def _draw_relations_tab(self, world: WorldState, rect: Any) -> None:
+        self._line(rect.x, rect.y, "Relationships", PAPER, self.label)
+        headers = ["Toward", "Trust", "Fear", "Affinity", "Resent"]
+        x_positions = [rect.x + 148, rect.x + 314, rect.x + 420, rect.x + 526, rect.x + 646]
+        for x, label in zip(x_positions, headers):
+            self._line(x, rect.y + 2, label, (238, 214, 161), self.tiny)
+        y = rect.y + 30
+        for agent in list(world.agents.values())[:5]:
+            self._line(rect.x, y, agent.name[:14], (174, 220, 238), self.small)
+            self._draw_social_row(agent.social_to_player, x_positions, y, "Player")
+            y += 24
+        y += 8
+        self._line(rect.x, y, "Agent to agent", PAPER, self.label)
+        y += 27
+        rows = 0
+        for agent in world.agents.values():
+            for target in world.agents.values():
+                if agent.id == target.id:
+                    continue
+                social = social_state_for(agent, target.id)
+                self._line(rect.x, y, f"{agent.name[:9]} -> {target.name[:9]}", (224, 229, 216), self.tiny)
+                self._draw_social_row(social, x_positions, y, target.name[:10], tiny=True)
+                y += 18
+                rows += 1
+                if rows >= 6 or y > rect.bottom - 14:
+                    return
+
+    def _draw_social_row(self, social: Any, x_positions: list[int], y: int, target_label: str, tiny: bool = False) -> None:
+        font = self.tiny if tiny else self.small
+        values = [target_label, f"{social.trust:.0f}", f"{social.fear:.0f}", f"{social.affinity:.0f}", f"{social.resentment:.0f}"]
+        colours = [(238, 238, 220), (86, 164, 230), (214, 82, 70), (112, 194, 130), (232, 142, 82)]
+        for x, value, colour in zip(x_positions, values, colours):
+            self._line(x, y, value, colour, font)
 
     def _compact_state_line(self, agent: Agent) -> str:
         return (
@@ -852,7 +890,7 @@ class Renderer:
             self._line(rect.x + 34, rect.bottom - 62, ("Known: " + ", ".join(available[:5]))[:96], (205, 215, 198), self.tiny)
         else:
             self._line(rect.x + 34, rect.bottom - 62, "Known: none yet. R tries local Ollama discovery; typing any model name also works.", (205, 215, 198), self.tiny)
-        self._line(rect.x + 34, rect.bottom - 32, "Up/Down select   Enter edit   Tab cycle known   Delete clear   Ctrl+S save   R refresh   Esc close", PAPER, self.tiny)
+        self._line(rect.x + 34, rect.bottom - 32, "Up/Down select   Enter edit   Tab cycle   A all   P powerful   H helper   Delete clear   Ctrl+S save   R refresh   Esc", PAPER, self.tiny)
 
     def _draw_text_chat(self, world: WorldState, text_chat: dict) -> None:
         self._dark_overlay(72)
@@ -877,7 +915,7 @@ class Renderer:
             self.pygame.draw.rect(self.screen, GOLD, portrait_rect, width=2, border_radius=5)
             self._small_nameplate(self.pygame.Rect(portrait_rect.x, portrait_rect.bottom + 6, portrait_rect.w, 24), f"{lead_agent.name} / {lead_agent.emotion}")
 
-        dialogue_rect = self.pygame.Rect(rect.x + 224, rect.y + 54, rect.w - 252, 138)
+        dialogue_rect = self.pygame.Rect(rect.x + 224, rect.y + 54, rect.w - 252, 116)
         self.pygame.draw.rect(self.screen, (35, 67, 52), dialogue_rect, border_radius=4)
         self.pygame.draw.rect(self.screen, GOLD_DARK, dialogue_rect, width=2, border_radius=4)
         rows = self._chat_rows_for_targets(world, target_ids)
@@ -895,16 +933,28 @@ class Renderer:
                 y += 20
             self._line(dialogue_rect.right - 150, dialogue_rect.y + 10, "history scroll", (238, 214, 161), self.tiny)
         elif latest:
-            speaker_colour = (255, 241, 166) if latest.source == "player" else (174, 220, 238)
+            speaker_colour = self._speaker_colour(latest.source)
             self._line(dialogue_rect.x + 18, dialogue_rect.y + 14, f"{latest.speaker_name}:", speaker_colour, self.label)
             y = dialogue_rect.y + 46
-            for line in self._wrap(latest.content, 78, 4):
+            for line in self._wrap(latest.content, 78, 3):
                 self._line(dialogue_rect.x + 18, y, line, (248, 244, 220), self.font)
                 y += 24
         else:
             self._line(dialogue_rect.x + 18, dialogue_rect.y + 48, "Say something.", (248, 244, 220), self.font)
 
-        input_rect = self.pygame.Rect(rect.x + 224, rect.bottom - 86, rect.w - 252, 48)
+        effects = list(text_chat.get("effects") or [])
+        effects_rect = self.pygame.Rect(rect.x + 224, dialogue_rect.bottom + 8, rect.w - 252, 38)
+        self.pygame.draw.rect(self.screen, (27, 52, 43), effects_rect, border_radius=4)
+        self.pygame.draw.rect(self.screen, GOLD_DARK, effects_rect, width=1, border_radius=4)
+        if effects:
+            y = effects_rect.y + 6
+            for effect in effects[-2:]:
+                self._line(effects_rect.x + 12, y, effect[:96], (238, 214, 161), self.tiny)
+                y += 17
+        else:
+            self._line(effects_rect.x + 12, effects_rect.y + 13, "Social effects will appear here after each line.", (205, 215, 198), self.tiny)
+
+        input_rect = self.pygame.Rect(rect.x + 224, rect.bottom - 82, rect.w - 252, 46)
         self.pygame.draw.rect(self.screen, (250, 240, 188), input_rect, border_radius=3)
         self.pygame.draw.rect(self.screen, GOLD_DARK, input_rect, width=2, border_radius=3)
         text = str(text_chat.get("text", ""))
@@ -933,12 +983,19 @@ class Renderer:
     def _chat_rows_for_targets(self, world: WorldState, target_ids: list[str]) -> list[tuple[str, str, tuple[int, int, int]]]:
         rows: list[tuple[str, str, tuple[int, int, int]]] = []
         for line in self._chat_lines_for_targets(world, target_ids):
-            colour = (255, 241, 166) if line.source == "player" else (174, 220, 238)
+            colour = self._speaker_colour(line.source)
             wrapped = self._wrap(line.content, 82, 12)
             for index, text in enumerate(wrapped):
                 rows.append((f"{line.speaker_name}:" if index == 0 else "", text, colour))
             rows.append(("", "", colour))
         return rows
+
+    def _speaker_colour(self, source: str) -> tuple[int, int, int]:
+        if source == "player":
+            return (255, 241, 166)
+        if source == "system":
+            return (238, 214, 161)
+        return (174, 220, 238)
 
     def _draw_agent_dossier(self, world: WorldState, dossier: dict) -> None:
         agent = world.agents.get(dossier.get("agent_id", ""))

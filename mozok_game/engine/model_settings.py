@@ -8,6 +8,11 @@ from typing import Any
 
 
 MODEL_ROLES = ["chat", "scene", "semantic", "fast", "reasoning", "summarizer", "maintenance"]
+MODEL_ROLE_GROUPS = {
+    "all": list(MODEL_ROLES),
+    "powerful": ["chat", "scene", "reasoning"],
+    "helper": ["semantic", "fast", "summarizer", "maintenance"],
+}
 
 
 @dataclass(slots=True)
@@ -92,6 +97,18 @@ def discover_ollama_models(base_url: str | None = None, timeout: float = 1.5) ->
 
 def merge_discovered_models(settings: GameModelSettings, models: list[str]) -> None:
     settings.available_models = _dedupe([*settings.available_models, *models, *settings.role_models.values()])
+
+
+def apply_model_preset(draft: dict[str, str], model: str, group: str) -> dict[str, str]:
+    clean = str(model or "").strip()
+    roles = MODEL_ROLE_GROUPS.get(str(group or "").strip().lower(), [])
+    result = {role: str(value).strip() for role, value in dict(draft or {}).items() if role in MODEL_ROLES and str(value).strip()}
+    for role in roles:
+        if clean:
+            result[role] = clean
+        else:
+            result.pop(role, None)
+    return result
 
 
 def _env_models() -> list[str]:

@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from mozok_game.engine.dialogue_reactions import apply_open_dialogue_reaction, finalise_dialogue_reaction, snapshot_player_relationship
 from mozok_game.engine.director import apply_dialogue_choice, build_dialogue_options
 from mozok_game.engine.interactions import interact_with_object
 from mozok_game.engine.inventory import first_transferable_item, item_name, transfer_item
-from mozok_game.engine.model_settings import MODEL_ROLES, discover_ollama_models, load_game_model_settings, merge_discovered_models, save_game_model_settings
+from mozok_game.engine.model_settings import MODEL_ROLES, apply_model_preset, discover_ollama_models, load_game_model_settings, merge_discovered_models, save_game_model_settings
 from mozok_game.engine.object_effects import interaction_spec
 from mozok_game.engine.scene_validation import validate_agent_dialogue
 from mozok_game.engine.speech_actions import apply_agent_decision, decide_agent_response, record_player_claims
@@ -303,6 +304,7 @@ class PygameApp:
             "target_ids": target_ids,
             "text": "",
             "scroll": 0,
+            "effects": [],
         }
 
     def _open_direct_chat(self, agent) -> None:
@@ -313,6 +315,7 @@ class PygameApp:
             "target_ids": [agent.id],
             "text": "",
             "scroll": 0,
+            "effects": [],
         }
 
     def _open_agent_dossier(self) -> None:
@@ -347,6 +350,7 @@ class PygameApp:
             metadata={"target_agent_ids": target_ids},
         )
         for agent in agents:
+            before_social = snapshot_player_relationship(agent)
             parsed = self.brain.interpret_speech(self.world, agent, text)
             record_player_claims(self.world, agent, parsed)
             decision = decide_agent_response(self.world, agent, parsed)
@@ -359,7 +363,10 @@ class PygameApp:
                 apply_agent_decision(self.world, agent, parsed, decision)
                 reply = decision.reply
             else:
+                apply_open_dialogue_reaction(self.world, agent, parsed)
                 reply = self.brain.chat(self.world, agent, text, participant_names)
+            reaction = finalise_dialogue_reaction(self.world, agent, before_social, parsed, decision if decision.handled else None)
+            self._append_chat_effect(reaction.summary)
             clean = reply.strip()
             if clean.lower().startswith(f"{agent.name.lower()}:"):
                 clean = clean.split(":", 1)[1].strip()
@@ -382,6 +389,13 @@ class PygameApp:
                     tags=["dialogue", "agent", chat_tag],
                     metadata={"agent_id": agent.id, "participants": participant_names},
                 )
+
+    def _append_chat_effect(self, summary: str) -> None:
+        if not self.text_chat:
+            return
+        effects = list(self.text_chat.get("effects") or [])
+        effects.append(summary)
+        self.text_chat["effects"] = effects[-4:]
 
     def _give_item_to_front_agent(self) -> None:
         agent = self._agent_at(self._front_position())
@@ -427,7 +441,7 @@ class PygameApp:
             "editing": False,
             "draft": dict(self.model_settings.role_models),
             "available": list(self.model_settings.available_models),
-            "status": "Choose role, Enter edit, Tab cycle, Ctrl+S save, R refresh.",
+            "status": "Choose role, Enter edit, Tab cycle, A all, P powerful, H helper, Ctrl+S save.",
         }
 
     def _handle_model_settings_text(self, text: str) -> None:
@@ -481,6 +495,16 @@ class PygameApp:
                 draft[role] = available[(index + 1) % len(available)]
                 self.model_settings_ui["draft"] = draft
             return True
+        if key in {pg.K_a, pg.K_p, pg.K_h}:
+            group = "all" if key == pg.K_a else "powerful" if key == pg.K_p else "helper"
+            model = self._selected_model_for_preset(draft, role)
+            if not model:
+                self.model_settings_ui["status"] = "Pick or type a model first, then apply it to a group."
+                return True
+            self.model_settings_ui["draft"] = apply_model_preset(draft, model, group)
+            label = "all roles" if group == "all" else "chat/scene/reasoning" if group == "powerful" else "semantic/fast/summarizer/maintenance"
+            self.model_settings_ui["status"] = f"Applied {model} to {label}. Ctrl+S saves."
+            return True
         if key == pg.K_DELETE:
             draft.pop(role, None)
             self.model_settings_ui["draft"] = draft
@@ -499,6 +523,13 @@ class PygameApp:
             self.model_settings_ui = None
             return True
         return True
+
+    def _selected_model_for_preset(self, draft: dict[str, str], role: str) -> str:
+        current = str(draft.get(role, "")).strip()
+        if current:
+            return current
+        available = list(self.model_settings_ui.get("available") or []) if self.model_settings_ui else []
+        return str(available[0]).strip() if available else ""
 
     def _save_model_settings_ui(self) -> None:
         if not self.model_settings_ui:
